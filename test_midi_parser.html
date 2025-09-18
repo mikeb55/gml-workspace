@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MIDI Parser Test</title>
+    <style>
+        body { font-family: monospace; background: #1a1a1a; color: #0f0; padding: 20px; }
+        #drop { border: 2px dashed #0f0; padding: 50px; text-align: center; margin: 20px; }
+        #output { background: #000; padding: 20px; margin: 20px; white-space: pre-wrap; }
+        button { background: #0f0; color: #000; padding: 10px 20px; margin: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>MIDI Parser - Quick Test</h1>
+    <div id="drop">Drop a MIDI file here or <input type="file" id="file" accept=".mid,.midi"></div>
+    <button onclick="testWithSample()">Test with Sample Data</button>
+    <div id="output">Ready...</div>
+    
+    <script>
+        // Simple MIDI parser to get you started
+        function parseMIDI(buffer) {
+            const data = new Uint8Array(buffer);
+            const result = { tracks: [], tempo: 120, notes: [] };
+            
+            // Check MIDI header
+            if (String.fromCharCode(...data.slice(0, 4)) !== 'MThd') {
+                return { error: 'Not a MIDI file' };
+            }
+            
+            // Get basic info
+            const format = (data[8] << 8) | data[9];
+            const numTracks = (data[10] << 8) | data[11];
+            const division = (data[12] << 8) | data[13];
+            
+            result.format = format;
+            result.tracks = numTracks;
+            result.ticksPerQuarter = division;
+            
+            // Find and parse tracks (simplified)
+            let pos = 14;
+            let notesFound = [];
+            
+            while (pos < data.length - 4) {
+                if (String.fromCharCode(...data.slice(pos, pos + 4)) === 'MTrk') {
+                    pos += 4;
+                    const trackLength = (data[pos] << 24) | (data[pos+1] << 16) | (data[pos+2] << 8) | data[pos+3];
+                    pos += 4;
+                    
+                    const trackEnd = pos + trackLength;
+                    while (pos < trackEnd && pos < data.length) {
+                        // Skip delta time (simplified)
+                        while (data[pos] & 0x80) pos++;
+                        pos++;
+                        
+                        const event = data[pos];
+                        if ((event & 0xF0) === 0x90) { // Note ON
+                            const note = data[pos + 1];
+                            const velocity = data[pos + 2];
+                            if (velocity > 0) {
+                                notesFound.push({ pitch: note, velocity: velocity });
+                            }
+                            pos += 3;
+                        } else if ((event & 0xF0) === 0x80) { // Note OFF
+                            pos += 3;
+                        } else if (event === 0xFF) { // Meta event
+                            pos += 3 + data[pos + 2];
+                        } else {
+                            pos++;
+                        }
+                    }
+                }
+                pos++;
+            }
+            
+            result.notes = notesFound;
+            return result;
+        }
+        
+        // File handling
+        document.getElementById('file').onchange = function(e) {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const result = parseMIDI(e.target.result);
+                displayResult(result);
+            };
+            reader.readAsArrayBuffer(file);
+        };
+        
+        // Drag and drop
+        const dropZone = document.getElementById('drop');
+        dropZone.ondragover = (e) => e.preventDefault();
+        dropZone.ondrop = (e) => {
+            e.preventDefault();
+            const file = e.dataTransfer.files[0];
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const result = parseMIDI(e.target.result);
+                displayResult(result);
+            };
+            reader.readAsArrayBuffer(file);
+        };
+        
+        function displayResult(result) {
+            let output = 'MIDI PARSE RESULT:\n\n';
+            if (result.error) {
+                output += 'ERROR: ' + result.error;
+            } else {
+                output += `Format: ${result.format}\n`;
+                output += `Tracks: ${result.tracks}\n`;
+                output += `Ticks/Quarter: ${result.ticksPerQuarter}\n\n`;
+                output += `NOTES FOUND: ${result.notes.length}\n`;
+                
+                // Show first 10 notes
+                result.notes.slice(0, 10).forEach((note, i) => {
+                    const noteName = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'][note.pitch % 12];
+                    const octave = Math.floor(note.pitch / 12) - 1;
+                    output += `${i+1}. ${noteName}${octave} (MIDI: ${note.pitch}, Vel: ${note.velocity})\n`;
+                });
+                
+                if (result.notes.length > 10) {
+                    output += `... and ${result.notes.length - 10} more notes\n`;
+                }
+                
+                // Extract patterns (simple)
+                output += '\n\nPATTERN ANALYSIS:\n';
+                const intervals = [];
+                for (let i = 1; i < Math.min(result.notes.length, 20); i++) {
+                    intervals.push(result.notes[i].pitch - result.notes[i-1].pitch);
+                }
+                output += 'Intervals: ' + intervals.join(', ');
+            }
+            
+            document.getElementById('output').textContent = output;
+        }
+        
+        function testWithSample() {
+            // Create a minimal MIDI file in memory
+            const header = [0x4D, 0x54, 0x68, 0x64, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x01, 0x00, 0x60];
+            const track = [0x4D, 0x54, 0x72, 0x6B, 0x00, 0x00, 0x00, 0x19];
+            const events = [
+                0x00, 0x90, 60, 80,  // C4 ON
+                0x60, 0x80, 60, 0,   // C4 OFF
+                0x00, 0x90, 62, 80,  // D4 ON
+                0x60, 0x80, 62, 0,   // D4 OFF
+                0x00, 0xFF, 0x2F, 0x00 // End track
+            ];
+            
+            const midi = new Uint8Array([...header, ...track, ...events]);
+            const result = parseMIDI(midi.buffer);
+            displayResult(result);
+        }
+    </script>
+</body>
+</html>
