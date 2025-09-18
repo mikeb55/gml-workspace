@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fix MusicXML Score - GML Quartet Repair</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .upload-box {
+            border: 3px dashed #999;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            background: #f9f9f9;
+            cursor: pointer;
+            margin: 20px 0;
+        }
+        .upload-box:hover {
+            background: #f0f0f0;
+            border-color: #666;
+        }
+        .upload-box.active {
+            background: #e8f5e9;
+            border-color: #4caf50;
+        }
+        button {
+            background: #4caf50;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 10px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .status {
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+            display: none;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            display: block;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            display: block;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+            display: block;
+        }
+        input[type="file"] {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎼 Fix Your MusicXML Score</h1>
+        <p style="text-align: center; color: #666;">
+            This tool repairs incomplete measures in your quartet score
+        </p>
+        
+        <div class="upload-box" id="dropZone">
+            <h2>📁 Drop your MusicXML file here</h2>
+            <p>or click to browse</p>
+            <input type="file" id="fileInput" accept=".xml,.musicxml">
+        </div>
+        
+        <div style="text-align: center;">
+            <button id="repairBtn" disabled>🔧 Repair Score</button>
+            <button id="downloadBtn" disabled>💾 Download Fixed Score</button>
+        </div>
+        
+        <div id="status" class="status"></div>
+    </div>
+
+    <script>
+        let originalContent = null;
+        let repairedContent = null;
+        let fileName = '';
+
+        // File handling
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const repairBtn = document.getElementById('repairBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const status = document.getElementById('status');
+
+        dropZone.addEventListener('click', () => fileInput.click());
+        
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('active');
+        });
+        
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('active');
+        });
+        
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('active');
+            
+            const file = e.dataTransfer.files[0];
+            if (file) handleFile(file);
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) handleFile(file);
+        });
+
+        function handleFile(file) {
+            fileName = file.name;
+            const reader = new FileReader();
+            
+            reader.onload = (e) => {
+                originalContent = e.target.result;
+                showStatus('info', `File loaded: ${fileName}`);
+                repairBtn.disabled = false;
+                downloadBtn.disabled = true;
+            };
+            
+            reader.readAsText(file);
+        }
+
+        repairBtn.addEventListener('click', () => {
+            if (!originalContent) return;
+            
+            showStatus('info', 'Repairing score...');
+            
+            try {
+                // Parse the XML
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(originalContent, 'text/xml');
+                
+                // Check for parsing errors
+                const parseError = xmlDoc.querySelector('parsererror');
+                if (parseError) {
+                    showStatus('error', 'Error: Invalid XML file');
+                    return;
+                }
+                
+                // Repair the score
+                let fixedCount = 0;
+                let notesAdded = 0;
+                
+                // Process each part
+                const parts = xmlDoc.querySelectorAll('part');
+                parts.forEach(part => {
+                    const partId = part.getAttribute('id');
+                    const measures = part.querySelectorAll('measure');
+                    
+                    measures.forEach((measure, measureIndex) => {
+                        // Remove forward elements
+                        const forwards = measure.querySelectorAll('forward');
+                        forwards.forEach(f => f.remove());
+                        
+                        // Calculate current duration
+                        let currentDuration = 0;
+                        const notes = measure.querySelectorAll('note');
+                        
+                        notes.forEach(note => {
+                            const duration = note.querySelector('duration');
+                            if (duration) {
+                                currentDuration += parseInt(duration.textContent);
+                            }
+                        });
+                        
+                        // Check if measure needs repair (4/4 time = 1024 divisions)
+                        const expectedDuration = 1024;
+                        
+                        if (currentDuration < expectedDuration) {
+                            const missing = expectedDuration - currentDuration;
+                            const notesToAdd = Math.floor(missing / 256); // 256 = quarter note
+                            
+                            fixedCount++;
+                            
+                            // Add appropriate notes based on part
+                            if (partId === 'P3') {
+                                // Viola - add harmony notes
+                                const harmonies = [
+                                    [{p: 'E', o: 3}, {p: 'G', o: 3}],
+                                    [{p: 'B', o: 3}, {p: 'D', o: 4}],
+                                    [{p: 'A', o: 3}, {p: 'C', o: 4}],
+                                    [{p: 'C', o: 4}, {p: 'E', o: 4}]
+                                ];
+                                const pattern = harmonies[measureIndex % harmonies.length];
+                                
+                                for (let i = 0; i < notesToAdd; i++) {
+                                    const noteData = pattern[i % pattern.length];
+                                    addNote(xmlDoc, measure, noteData.p, noteData.o);
+                                    notesAdded++;
+                                }
+                            } else if (partId === 'P4') {
+                                // Cello - add bass notes
+                                const bassPatterns = [
+                                    [{p: 'C', o: 2}, {p: 'E', o: 2}, {p: 'G', o: 2}],
+                                    [{p: 'G', o: 2}, {p: 'B', o: 2}, {p: 'D', o: 3}],
+                                    [{p: 'F', o: 2}, {p: 'A', o: 2}, {p: 'C', o: 3}],
+                                    [{p: 'G', o: 2}, {p: 'F', o: 2}, {p: 'E', o: 2}]
+                                ];
+                                const pattern = bassPatterns[measureIndex % bassPatterns.length];
+                                
+                                for (let i = 0; i < notesToAdd; i++) {
+                                    const noteData = pattern[i % pattern.length];
+                                    addNote(xmlDoc, measure, noteData.p, noteData.o);
+                                    notesAdded++;
+                                }
+                            }
+                        }
+                    });
+                });
+                
+                // Serialize back to string
+                const serializer = new XMLSerializer();
+                repairedContent = serializer.serializeToString(xmlDoc);
+                
+                // Show results
+                if (fixedCount > 0) {
+                    showStatus('success', 
+                        `✅ Repair complete! Fixed ${fixedCount} measures, added ${notesAdded} notes.`
+                    );
+                    downloadBtn.disabled = false;
+                } else {
+                    showStatus('info', 'No repairs needed - score is already complete!');
+                }
+                
+            } catch (error) {
+                showStatus('error', `Error: ${error.message}`);
+            }
+        });
+
+        function addNote(xmlDoc, measure, pitch, octave) {
+            const note = xmlDoc.createElement('note');
+            
+            // Create pitch element
+            const pitchEl = xmlDoc.createElement('pitch');
+            const step = xmlDoc.createElement('step');
+            step.textContent = pitch;
+            const octaveEl = xmlDoc.createElement('octave');
+            octaveEl.textContent = octave;
+            pitchEl.appendChild(step);
+            pitchEl.appendChild(octaveEl);
+            
+            // Add duration
+            const duration = xmlDoc.createElement('duration');
+            duration.textContent = '256'; // Quarter note
+            
+            // Add voice
+            const voice = xmlDoc.createElement('voice');
+            voice.textContent = '1';
+            
+            // Add type
+            const type = xmlDoc.createElement('type');
+            type.textContent = 'quarter';
+            
+            // Add stem
+            const stem = xmlDoc.createElement('stem');
+            stem.textContent = octave < 4 ? 'up' : 'down';
+            
+            // Add staff
+            const staff = xmlDoc.createElement('staff');
+            staff.textContent = '1';
+            
+            // Assemble note
+            note.appendChild(pitchEl);
+            note.appendChild(duration);
+            note.appendChild(voice);
+            note.appendChild(type);
+            note.appendChild(stem);
+            note.appendChild(staff);
+            
+            // Add to measure
+            measure.appendChild(note);
+        }
+
+        downloadBtn.addEventListener('click', () => {
+            if (!repairedContent) return;
+            
+            // Create download
+            const blob = new Blob([repairedContent], { type: 'application/xml' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName.replace('.xml', '_repaired.xml').replace('.musicxml', '_repaired.musicxml');
+            a.click();
+            URL.revokeObjectURL(url);
+            
+            showStatus('success', '✅ File downloaded!');
+        });
+
+        function showStatus(type, message) {
+            status.className = 'status ' + type;
+            status.textContent = message;
+        }
+    </script>
+</body>
+</html>

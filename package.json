@@ -1,0 +1,19 @@
+{
+  "name": "gml-enhancement-suite",
+  "version": "1.0.0",
+  "description": "Universal enhancement layer for GML music generation apps",
+  "main": "shared-libs/gml-shared-memory.js",
+  "keywords": [
+    "music",
+    "generation",
+    "batch",
+    "ui",
+    "enhancement"
+  ],
+  "author": "Mike B",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mikeb55/gml-enhancement-suite.git"
+  }
+}

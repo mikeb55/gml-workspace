@@ -1,0 +1,5 @@
+# Electric Dreams - RiffGen → IRM → SongSketch Pipeline   
+Genre: Progressive Rock 
+Key: E minor 
+Tempo: 130 BPM 
+Structure: Intro - Verse - Chorus - Bridge - Solo - Outro 

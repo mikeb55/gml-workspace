@@ -1,0 +1,4 @@
+# Drum Patterns - Drum Engine Output 
+Pattern 1: 4/4 Rock Beat - Kick on 1,3 Snare on 2,4   
+Pattern 2: 7/8 Progressive - Complex subdivision 
+Pattern 3: Jazz Swing - Shuffle feel with ghost notes 
