@@ -383,6 +383,13 @@
             
             document.getElementById('output').textContent += '\n\n✅ MIDI exported successfully!';
         }
+
+        // Enhanced Notation Integration
+        function addNotationEnhancements(xml) {
+            const enhancer = new EnhancedNotation();
+            return enhancer.enhanceFullScore(xml);
+        }
+
     </script>
 </body>
 </html>
