@@ -1,0 +1,465 @@
+/**
+ * Quartal Engine Core - Generation Logic
+ * Supports all string sets, 3-note and 4-note quartals
+ */
+
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const FLAT_NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+const TUNING = [40, 45, 50, 55, 59, 64]; // EADGBE
+
+// Scale degree mappings
+const SCALE_DEGREES = {
+  ionian: [0, 2, 4, 5, 7, 9, 11],
+  dorian: [0, 2, 3, 5, 7, 9, 10],
+  phrygian: [0, 1, 3, 5, 7, 8, 10],
+  lydian: [0, 2, 4, 6, 7, 9, 11],
+  mixolydian: [0, 2, 4, 5, 7, 9, 10],
+  aeolian: [0, 2, 3, 5, 7, 8, 10],
+  locrian: [0, 1, 3, 5, 6, 8, 10]
+};
+
+function getPitchClass(noteName) {
+  const sharpIdx = NOTE_NAMES.indexOf(noteName);
+  if (sharpIdx >= 0) return sharpIdx;
+  return FLAT_NAMES.indexOf(noteName);
+}
+
+function getNoteName(pitchClass, useFlats = false) {
+  return useFlats ? FLAT_NAMES[pitchClass] : NOTE_NAMES[pitchClass];
+}
+
+function getScalePitchClasses(scale, root) {
+  const modeMap = {
+    'major': 'ionian',
+    'minor': 'aeolian',
+    'dorian': 'dorian',
+    'mixolydian': 'mixolydian',
+    'lydian': 'lydian',
+    'phrygian': 'phrygian',
+    'locrian': 'locrian'
+  };
+  
+  const mode = modeMap[scale.toLowerCase()] || 'ionian';
+  const degrees = SCALE_DEGREES[mode];
+  const rootPc = getPitchClass(root);
+  
+  if (rootPc < 0) {
+    throw new Error(`Invalid root note: ${root}. Must be a valid note name (C, C#, Db, D, etc.)`);
+  }
+  
+  return degrees.map(deg => (rootPc + deg) % 12);
+}
+
+function generateQuartalStack(scalePcs, stackRootIndex, stackType) {
+  const n = stackRootIndex;
+  const n3 = (n + 3) % 7;
+  const n6 = (n + 6) % 7;
+  const n9 = (n + 9) % 7;
+  
+  if (stackType === '3-note') {
+    return [scalePcs[n], scalePcs[n3], scalePcs[n6]];
+  } else {
+    return [scalePcs[n], scalePcs[n3], scalePcs[n6], scalePcs[n9]];
+  }
+}
+
+/**
+ * Find all possible guitar positions for a pitch class on a given string
+ * Returns array of { fret, midiNote, stringIndex }
+ */
+function findAllPositions(pitchClass, stringIndex, minFret = 0, maxFret = 24) {
+  const positions = [];
+  const openNote = TUNING[stringIndex] % 12;
+  
+  for (let fret = minFret; fret <= maxFret; fret++) {
+    const note = (openNote + fret) % 12;
+    if (note === pitchClass) {
+      positions.push({
+        fret,
+        midiNote: TUNING[stringIndex] + fret,
+        stringIndex
+      });
+    }
+  }
+  
+  return positions;
+}
+
+/**
+ * Find best compact position for a quartal stack on given string set
+ * Returns array of { fret, midiNote, stringIndex, pitchClass } for each voice
+ */
+function findBestPosition(stack, stringSet, anchorFret = 5) {
+  const MAX_FRET_SPAN = 5;
+  const minFret = Math.max(0, anchorFret - Math.floor(MAX_FRET_SPAN / 2));
+  const maxFret = Math.min(24, anchorFret + Math.ceil(MAX_FRET_SPAN / 2));
+  
+  // Find all possible positions for each pitch class on its assigned string
+  const allPositions = stack.map((pitchClass, voiceIndex) => {
+    const stringIndex = stringSet[voiceIndex];
+    return findAllPositions(pitchClass, stringIndex, minFret, maxFret);
+  });
+  
+  // If any voice has no positions, try expanding the range
+  if (allPositions.some(positions => positions.length === 0)) {
+    // Expand search range
+    const expandedMinFret = Math.max(0, anchorFret - MAX_FRET_SPAN);
+    const expandedMaxFret = Math.min(24, anchorFret + MAX_FRET_SPAN);
+    
+    for (let i = 0; i < allPositions.length; i++) {
+      if (allPositions[i].length === 0) {
+        const stringIndex = stringSet[i];
+        allPositions[i] = findAllPositions(stack[i], stringIndex, expandedMinFret, expandedMaxFret);
+      }
+    }
+  }
+  
+  // Find the best combination that fits within MAX_FRET_SPAN
+  let bestCombination = null;
+  let bestScore = Infinity;
+  
+  // Try all combinations (brute force for small sets)
+  function tryCombinations(voiceIndex, currentCombination) {
+    if (voiceIndex >= stack.length) {
+      // Check if this combination fits within MAX_FRET_SPAN
+      const frets = currentCombination.map(p => p.fret);
+      const minF = Math.min(...frets);
+      const maxF = Math.max(...frets);
+      const span = maxF - minF;
+      
+      if (span <= MAX_FRET_SPAN) {
+        // Calculate score (prefer positions closer to anchorFret)
+        const avgDistance = frets.reduce((sum, f) => sum + Math.abs(f - anchorFret), 0) / frets.length;
+        const score = span * 100 + avgDistance; // Prioritize smaller span, then closer to anchor
+        
+        if (score < bestScore) {
+          bestScore = score;
+          bestCombination = [...currentCombination];
+        }
+      }
+      return;
+    }
+    
+    // Try each position for this voice
+    for (const position of allPositions[voiceIndex]) {
+      currentCombination.push({
+        ...position,
+        pitchClass: stack[voiceIndex] // Always set pitchClass from stack
+      });
+      tryCombinations(voiceIndex + 1, currentCombination);
+      currentCombination.pop();
+    }
+  }
+  
+  tryCombinations(0, []);
+  
+  // If no combination found, use the closest positions to anchorFret
+  if (!bestCombination) {
+    bestCombination = allPositions.map((positions, voiceIndex) => {
+      if (positions.length === 0) {
+        // Fallback: find position on any string
+        const pitchClass = stack[voiceIndex];
+        for (let s = 0; s < 6; s++) {
+          const pos = findAllPositions(pitchClass, s, 0, 24);
+          if (pos.length > 0) {
+            // Find closest to anchorFret
+            pos.sort((a, b) => Math.abs(a.fret - anchorFret) - Math.abs(b.fret - anchorFret));
+            return { ...pos[0], stringIndex: s, pitchClass };
+          }
+        }
+        // CRITICAL: If still no position found, create a fallback position
+        // This should never happen, but ensures we always return a position
+        return { fret: anchorFret, midiNote: TUNING[stringSet[voiceIndex]] + anchorFret, stringIndex: stringSet[voiceIndex], pitchClass };
+      }
+      
+      // Find closest to anchorFret
+      positions.sort((a, b) => Math.abs(a.fret - anchorFret) - Math.abs(b.fret - anchorFret));
+      const pos = positions[0];
+      return { ...pos, pitchClass: stack[voiceIndex] }; // Always set pitchClass from stack
+    });
+  }
+  
+  // CRITICAL FIX: Ensure we always return exactly stack.length positions
+  if (!bestCombination || bestCombination.length < stack.length) {
+    // Rebuild to ensure we have all positions
+    const guaranteedPositions = [];
+    for (let i = 0; i < stack.length; i++) {
+      const pitchClass = stack[i];
+      const stringIndex = stringSet[i];
+      const pos = findAllPositions(pitchClass, stringIndex, 0, 24);
+      if (pos.length > 0) {
+        pos.sort((a, b) => Math.abs(a.fret - anchorFret) - Math.abs(b.fret - anchorFret));
+        guaranteedPositions.push({ ...pos[0], pitchClass });
+      } else {
+        // Find on any string
+        for (let s = 0; s < 6; s++) {
+          const pos = findAllPositions(pitchClass, s, 0, 24);
+          if (pos.length > 0) {
+            pos.sort((a, b) => Math.abs(a.fret - anchorFret) - Math.abs(b.fret - anchorFret));
+            guaranteedPositions.push({ ...pos[0], stringIndex: s, pitchClass });
+            break;
+          }
+        }
+      }
+    }
+    return guaranteedPositions;
+  }
+  
+  return bestCombination;
+}
+
+function generateMusicXML(params) {
+  const { root, scale, stackType, bars, noteValue, stringSet } = params;
+  const scalePcs = getScalePitchClasses(scale, root);
+  
+  // Calculate divisions and note type based on note value
+  // MusicXML: divisions = divisions per quarter note (must be integer)
+  // duration = number of divisions for this note
+  let divisions, noteDuration, noteType;
+  if (noteValue === 'half') {
+    divisions = 1; // 1 division per quarter note
+    noteDuration = 2; // Half note = 2 quarter notes = 2 divisions
+    noteType = 'half';
+  } else if (noteValue === 'quarter') {
+    divisions = 1; // 1 division per quarter note
+    noteDuration = 1; // Quarter note = 1 division
+    noteType = 'quarter';
+  } else if (noteValue === 'eighth') {
+    divisions = 2; // 2 divisions per quarter note (for eighth notes)
+    noteDuration = 1; // Eighth note = 1 division (when divisions=2)
+    noteType = 'eighth';
+  } else if (noteValue === 'sixteenth' || noteValue === '16th') {
+    divisions = 4; // 4 divisions per quarter note (for sixteenth notes)
+    noteDuration = 1; // Sixteenth note = 1 division (when divisions=4)
+    noteType = '16th';
+  } else {
+    // Default to quarter
+    divisions = 1;
+    noteDuration = 1;
+    noteType = 'quarter';
+  }
+  
+  // Determine string set
+  let finalStringSet;
+  if (stringSet && Array.isArray(stringSet)) {
+    finalStringSet = stringSet;
+  } else {
+    // Default string sets
+    if (stackType === '3-note') {
+      finalStringSet = [5, 4, 3]; // 6-5-4
+    } else {
+      finalStringSet = [5, 4, 3, 2]; // 6-5-4-3
+    }
+  }
+  
+  // Generate stacks
+  const stacks = [];
+  for (let bar = 0; bar < bars; bar++) {
+    const stackRootIndex = bar % 7;
+    const stack = generateQuartalStack(scalePcs, stackRootIndex, stackType);
+    stacks.push(stack);
+  }
+  
+  let xml = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
+<score-partwise version="3.1">
+  <part-list>
+    <score-part id="P1">
+      <part-name>Guitar</part-name>
+    </score-part>
+  </part-list>
+  <part id="P1">`;
+  
+  for (let bar = 0; bar < bars; bar++) {
+    xml += `
+    <measure number="${bar + 1}">
+      <attributes>
+        <divisions>${divisions}</divisions>
+        <key>
+          <fifths>0</fifths>
+        </key>
+        <time>
+          <beats>4</beats>
+          <beat-type>4</beat-type>
+        </time>
+        <clef>
+          <sign>G</sign>
+          <line>2</line>
+        </clef>
+      </attributes>`;
+    
+    const stack = stacks[bar];
+    
+    // Find best position for this stack
+    const anchorFret = 5 + (bar * 2); // Slight position shift per bar
+    const positions = findBestPosition(stack, finalStringSet, anchorFret);
+    
+    // CRITICAL: Ensure we have exactly stack.length positions
+    if (!positions || positions.length !== stack.length) {
+      throw new Error(`findBestPosition returned ${positions ? positions.length : 0} positions, expected ${stack.length}`);
+    }
+    
+    // Sort positions by string index (lowest to highest)
+    positions.sort((a, b) => b.stringIndex - a.stringIndex);
+    
+    // Generate notes for ALL positions - we know positions.length === stack.length
+    // CRITICAL: All notes must be in the same voice with <chord/> tags to play simultaneously
+    for (let voice = 0; voice < stack.length; voice++) {
+      const position = positions[voice];
+      if (position) {
+        const midiNote = position.midiNote;
+        const octave = Math.floor(midiNote / 12) - 1;
+        // Ensure pitchClass is set - use from position or from stack
+        const pitchClass = (position.pitchClass !== undefined && position.pitchClass >= 0) ? position.pitchClass : stack[voice];
+        if (pitchClass < 0 || pitchClass > 11) {
+          throw new Error(`Invalid pitchClass ${pitchClass} for voice ${voice}, stack: ${JSON.stringify(stack)}`);
+        }
+        const noteName = getNoteName(pitchClass, scale === 'dorian' || scale === 'minor');
+        if (!noteName) {
+          throw new Error(`getNoteName returned undefined for pitchClass ${pitchClass}`);
+        }
+        const step = noteName.replace(/[#b]/, '');
+        const alter = noteName.includes('#') ? 1 : (noteName.includes('b') ? -1 : null);
+        
+        xml += `
+      <note>`;
+        // Add <chord/> tag to all notes after the first one to make them play simultaneously
+        if (voice > 0) {
+          xml += `
+        <chord/>`;
+        }
+        xml += `
+        <pitch>`;
+        xml += `
+          <step>${step}</step>`;
+        if (alter !== null) {
+          xml += `
+          <alter>${alter}</alter>`;
+        }
+        xml += `
+          <octave>${octave}</octave>
+        </pitch>
+        <duration>${noteDuration}</duration>
+        <type>${noteType}</type>
+        <voice>1</voice>
+      </note>`;
+      }
+    }
+    
+    xml += `
+    </measure>`;
+  }
+  
+  xml += `
+  </part>
+</score-partwise>`;
+  
+  return xml;
+}
+
+function parseCommand(command) {
+  const lower = command.toLowerCase();
+  
+  // Extract root note - look for note names before scale words
+  const scaleKeywords = ['major', 'minor', 'dorian', 'mixolydian', 'lydian', 'phrygian', 'locrian', 'ionian', 'aeolian'];
+  const validNotes = ['C', 'C#', 'Db', 'D', 'D#', 'Eb', 'E', 'F', 'F#', 'Gb', 'G', 'G#', 'Ab', 'A', 'A#', 'Bb', 'B'];
+  let root = null;
+  
+  // Try to find root note immediately before scale keyword (most reliable)
+  for (const keyword of scaleKeywords) {
+    const keywordIndex = lower.indexOf(keyword);
+    if (keywordIndex > 0) {
+      const beforeKeyword = command.substring(0, keywordIndex).trim();
+      // Look for note name patterns: C, C#, Db, etc. - but exclude common words like "a", "the"
+      // Match pattern: note name that appears right before the scale keyword
+      const rootMatch = beforeKeyword.match(/\b([A-G][#b]?)\s+(?:scale|mode|harmon|quartal|stack)/i);
+      if (rootMatch) {
+        const candidate = rootMatch[1];
+        if (validNotes.includes(candidate) || validNotes.includes(candidate.toUpperCase())) {
+          root = candidate;
+          break;
+        }
+      }
+      // Also try: note name directly before scale keyword
+      const directMatch = beforeKeyword.match(/\b([A-G][#b]?)\s*$/i);
+      if (directMatch) {
+        const candidate = directMatch[1];
+        if (validNotes.includes(candidate) || validNotes.includes(candidate.toUpperCase())) {
+          root = candidate;
+          break;
+        }
+      }
+    }
+  }
+  
+  // If no root found, look for "X scale" or "X major/minor/etc" pattern
+  if (!root) {
+    const scalePattern = command.match(/\b([A-G][#b]?)\s+(?:major|minor|dorian|mixolydian|lydian|phrygian|locrian|ionian|aeolian|scale)/i);
+    if (scalePattern) {
+      const candidate = scalePattern[1];
+      if (validNotes.includes(candidate) || validNotes.includes(candidate.toUpperCase())) {
+        root = candidate;
+      }
+    }
+  }
+  
+  // Default to C if still not found
+  if (!root) {
+    root = 'C';
+  }
+  
+  // Extract scale/mode
+  let scale = 'major';
+  if (lower.includes('minor') || lower.includes('aeolian')) scale = 'minor';
+  else if (lower.includes('dorian')) scale = 'dorian';
+  else if (lower.includes('mixolydian')) scale = 'mixolydian';
+  else if (lower.includes('lydian')) scale = 'lydian';
+  else if (lower.includes('phrygian')) scale = 'phrygian';
+  else if (lower.includes('locrian')) scale = 'locrian';
+  else if (lower.includes('major') || lower.includes('ionian')) scale = 'major';
+  
+  // Extract stack type
+  let stackType = '3-note';
+  if (lower.includes('4-note') || lower.includes('four note') || lower.includes('4 note')) stackType = '4-note';
+  
+  // Extract bars
+  const barMatch = command.match(/\b(\d+)\s*(?:bar|bars|measure|measures)\b/i);
+  let bars = barMatch ? parseInt(barMatch[1]) : null;
+  
+  // If "scale harmonised" or "scale harmonized" is mentioned, default to 7 bars (one per scale degree)
+  if (bars === null && (lower.includes('scale harmonis') || lower.includes('harmonise') || lower.includes('harmonize'))) {
+    bars = 7; // One bar per scale degree
+  }
+  
+  // Default to 1 bar if not specified
+  if (bars === null) {
+    bars = 1;
+  }
+  
+  // Extract note value
+  let noteValue = 'quarter';
+  if (lower.includes('sixteenth') || lower.includes('16th')) noteValue = 'sixteenth';
+  else if (lower.includes('eighth') || lower.includes('8th')) noteValue = 'eighth';
+  else if (lower.includes('half')) noteValue = 'half';
+  else if (lower.includes('quarter')) noteValue = 'quarter';
+  
+  // Extract string set (if specified)
+  let stringSet = null;
+  const stringSetMatch = command.match(/\b(?:strings?|string\s*set)\s*([1-6](?:-[1-6])+)/i);
+  if (stringSetMatch) {
+    const setStr = stringSetMatch[1];
+    stringSet = setStr.split('-').map(s => parseInt(s) - 1).reverse(); // Convert to 0-indexed, reverse for low to high
+  }
+  
+  return { root, scale, stackType, bars, noteValue, stringSet };
+}
+
+module.exports = {
+  generateMusicXML,
+  parseCommand,
+  getScalePitchClasses,
+  generateQuartalStack,
+  findAllPositions,
+  findBestPosition
+};
+
