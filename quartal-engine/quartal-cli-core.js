@@ -87,9 +87,10 @@ function findAllPositions(pitchClass, stringIndex, minFret = 0, maxFret = 24) {
 
 /**
  * Find best compact position for a quartal stack on given string set
+ * With voice-leading: minimizes leaps from previous positions
  * Returns array of { fret, midiNote, stringIndex, pitchClass } for each voice
  */
-function findBestPosition(stack, stringSet, anchorFret = 5) {
+function findBestPosition(stack, stringSet, anchorFret = 5, previousPositions = null) {
   const MAX_FRET_SPAN = 5;
   const minFret = Math.max(0, anchorFret - Math.floor(MAX_FRET_SPAN / 2));
   const maxFret = Math.min(24, anchorFret + Math.ceil(MAX_FRET_SPAN / 2));
@@ -128,9 +129,54 @@ function findBestPosition(stack, stringSet, anchorFret = 5) {
       const span = maxF - minF;
       
       if (span <= MAX_FRET_SPAN) {
-        // Calculate score (prefer positions closer to anchorFret)
+        // Calculate base score (prefer positions closer to anchorFret)
         const avgDistance = frets.reduce((sum, f) => sum + Math.abs(f - anchorFret), 0) / frets.length;
-        const score = span * 100 + avgDistance; // Prioritize smaller span, then closer to anchor
+        let score = span * 100 + avgDistance; // Prioritize smaller span, then closer to anchor
+        
+        // Voice-leading: minimize leaps from previous positions
+        if (previousPositions && previousPositions.length === currentCombination.length) {
+          let totalLeap = 0;
+          let largeLeaps = 0;
+          let commonTones = 0;
+          
+          // Match voices by position in stack (top to bottom)
+          for (let i = 0; i < currentCombination.length; i++) {
+            const prevPos = previousPositions[i];
+            const currPos = currentCombination[i];
+            
+            if (prevPos && currPos) {
+              // Calculate fret distance (considering string changes)
+              const fretDistance = Math.abs(currPos.fret - prevPos.fret);
+              
+              // Bonus for same string (smooth voice-leading)
+              if (currPos.stringIndex === prevPos.stringIndex) {
+                score -= 5; // Small bonus for staying on same string
+              }
+              
+              // Bonus for common tones (same pitch class)
+              if (currPos.pitchClass === prevPos.pitchClass) {
+                commonTones++;
+                score -= 20; // Strong bonus for common tones
+              }
+              
+              totalLeap += fretDistance;
+              
+              // Penalize large leaps (> 5 frets)
+              if (fretDistance > 5) {
+                largeLeaps++;
+                score += fretDistance * 10; // Heavy penalty for large leaps
+              } else {
+                // Small penalty for any movement (prefer minimal motion)
+                score += fretDistance * 0.5;
+              }
+            }
+          }
+          
+          // Additional penalty for too many large leaps
+          if (largeLeaps > 0) {
+            score += largeLeaps * 50;
+          }
+        }
         
         if (score < bestScore) {
           bestScore = score;
@@ -270,6 +316,9 @@ function generateMusicXML(params) {
   </part-list>
   <part id="P1">`;
   
+  // Track previous positions for voice-leading
+  let previousPositions = null;
+  
   for (let bar = 0; bar < bars; bar++) {
     xml += `
     <measure number="${bar + 1}">`;
@@ -294,9 +343,12 @@ function generateMusicXML(params) {
     
     const stack = stacks[bar];
     
-    // Find best position for this stack
-    const anchorFret = 5 + (bar * 2); // Slight position shift per bar
-    const positions = findBestPosition(stack, finalStringSet, anchorFret);
+    // Find best position for this stack with voice-leading
+    // Use previous positions to minimize leaps
+    const anchorFret = previousPositions 
+      ? Math.round(previousPositions.reduce((sum, p) => sum + p.fret, 0) / previousPositions.length)
+      : 5 + (bar * 2); // First chord: slight position shift per bar
+    const positions = findBestPosition(stack, finalStringSet, anchorFret, previousPositions);
     
     // CRITICAL: Ensure we have exactly stack.length positions
     if (!positions || positions.length !== stack.length) {
@@ -370,6 +422,9 @@ function generateMusicXML(params) {
     
     xml += `
     </measure>`;
+    
+    // Update previous positions for voice-leading in next chord
+    previousPositions = positions.map(p => ({ ...p }));
   }
   
   xml += `
