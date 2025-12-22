@@ -91,7 +91,7 @@ Commands:
       
       console.log(`\n✅ MusicXML generated successfully!`);
       console.log(`📁 Saved to: ${filepath}`);
-      console.log(`\nYou can open this file in MuseScore, Finale, or any MusicXML-compatible software.`);
+      console.log(`\nYou can open this file in Guitar Pro 8, Sibelius or any MusicXML-compatible software.`);
     } catch (error) {
       console.error(`\n❌ Error: ${error.message}`);
     }

@@ -272,7 +272,10 @@ function generateMusicXML(params) {
   
   for (let bar = 0; bar < bars; bar++) {
     xml += `
-    <measure number="${bar + 1}">
+    <measure number="${bar + 1}">`;
+    // Attributes only in first measure (or when they change)
+    if (bar === 0) {
+      xml += `
       <attributes>
         <divisions>${divisions}</divisions>
         <key>
@@ -287,6 +290,7 @@ function generateMusicXML(params) {
           <line>2</line>
         </clef>
       </attributes>`;
+    }
     
     const stack = stacks[bar];
     
@@ -304,6 +308,7 @@ function generateMusicXML(params) {
     
     // Generate notes for ALL positions - we know positions.length === stack.length
     // CRITICAL: All notes must be in the same voice with <chord/> tags to play simultaneously
+    // IMPORTANT: <chord/> must be on the same line as <note> for proper MusicXML parsing
     for (let voice = 0; voice < stack.length; voice++) {
       const position = positions[voice];
       if (position) {
@@ -321,16 +326,17 @@ function generateMusicXML(params) {
         const step = noteName.replace(/[#b]/, '');
         const alter = noteName.includes('#') ? 1 : (noteName.includes('b') ? -1 : null);
         
-        xml += `
-      <note>`;
-        // Add <chord/> tag to all notes after the first one to make them play simultaneously
+        // Add <chord/> tag inline for all notes after the first one
         if (voice > 0) {
           xml += `
+      <note>
         <chord/>`;
+        } else {
+          xml += `
+      <note>`;
         }
         xml += `
-        <pitch>`;
-        xml += `
+        <pitch>
           <step>${step}</step>`;
         if (alter !== null) {
           xml += `
@@ -344,6 +350,22 @@ function generateMusicXML(params) {
         <voice>1</voice>
       </note>`;
       }
+    }
+    
+    // Add forward/rest to fill the measure if needed
+    // In 4/4 time, we need 4 beats total. If noteDuration is 1 (quarter note), we need 4 quarter notes worth
+    // But we're only putting one chord, so we need to add rests to fill the measure
+    const beatsPerMeasure = 4; // 4/4 time
+    const totalDurationNeeded = beatsPerMeasure * divisions; // Total divisions needed for full measure
+    const chordDuration = noteDuration; // Duration of our chord
+    const remainingDuration = totalDurationNeeded - chordDuration;
+    
+    if (remainingDuration > 0) {
+      // Add a forward element (rest) to complete the measure
+      xml += `
+      <forward>
+        <duration>${remainingDuration}</duration>
+      </forward>`;
     }
     
     xml += `
