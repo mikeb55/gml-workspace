@@ -17,11 +17,22 @@ const { generateMusicXML, parseCommand } = require('./quartal-cli-core');
  *   - F#-lydian-quartal-4note-1bars-1234567890.musicxml
  */
 function generateFilename(params) {
-  // Sanitize root note (replace # with sharp, b with flat for filename safety)
-  const root = params.root.replace(/#/g, 'sharp').replace(/b/g, 'flat');
+  // Handle multi-scale vs single-scale commands
+  let root, scale;
+  if (params.multiScale && params.segments) {
+    // Multi-scale: use first and last scale for filename
+    const firstSeg = params.segments[0];
+    const lastSeg = params.segments[params.segments.length - 1];
+    root = `${firstSeg.root}-to-${lastSeg.root}`;
+    scale = `${firstSeg.scale}-to-${lastSeg.scale}`;
+  } else {
+    // Single scale
+    root = params.root || 'C';
+    scale = params.scale || 'major';
+  }
   
-  // Get scale name
-  const scale = params.scale;
+  // Sanitize root note (replace # with sharp, b with flat for filename safety)
+  root = root.replace(/#/g, 'sharp').replace(/b/g, 'flat');
   
   // Get stack type (3note or 4note)
   const stackType = params.stackType === '3-note' ? '3note' : '4note';
@@ -32,11 +43,15 @@ function generateFilename(params) {
   // Add "fullscale" indicator if it's a full 7-bar harmonization
   const fullscale = bars === 7 ? '-fullscale' : '';
   
+  // Get tempo if specified
+  const tempo = params.tempo || 108;
+  const tempoStr = tempo !== 108 ? `-${tempo}bpm` : '';
+  
   // Get timestamp for uniqueness
   const timestamp = Date.now();
   
   // Build filename - use lowercase .musicxml extension for compatibility with Sibelius, Guitar Pro 8, etc.
-  const filename = `${root}-${scale}-quartal-${stackType}-${bars}bars${fullscale}-${timestamp}.musicxml`;
+  const filename = `${root}-${scale}-quartal-${stackType}-${bars}bars${fullscale}${tempoStr}-${timestamp}.musicxml`;
   
   return filename;
 }
@@ -50,6 +65,11 @@ function saveMusicXML(xml, filename) {
   const filepath = path.join(outputDir, filename);
   fs.writeFileSync(filepath, xml, 'utf8');
   return filepath;
+}
+
+// Export functions for testing
+if (require.main !== module) {
+  module.exports = { generateFilename, saveMusicXML };
 }
 
 // Interactive CLI
@@ -83,9 +103,32 @@ Commands:
     
     try {
       const params = parseCommand(command);
-      console.log(`\nGenerating: ${params.root} ${params.scale}, ${params.stackType} stacks, ${params.bars} bar(s)...`);
+      
+      // Display generation info
+      if (params.multiScale && params.segments) {
+        const scaleList = params.segments.map(s => `${s.root} ${s.scale}`).join(', ');
+        console.log(`\nGenerating multi-scale: ${scaleList}`);
+        console.log(`  ${params.stackType} stacks, ${params.bars} bars, ${params.noteValue} notes, ${params.tempo} bpm`);
+      } else {
+        console.log(`\nGenerating: ${params.root} ${params.scale}, ${params.stackType} stacks, ${params.bars} bar(s), ${params.noteValue} notes, ${params.tempo} bpm...`);
+      }
       
       const xml = generateMusicXML(params);
+      
+      // Verify XML has correct structure
+      const measureCount = (xml.match(/<measure number=/g) || []).length;
+      const noteCount = (xml.match(/<note>/g) || []).length;
+      const expectedNotes = params.bars * (params.stackType === '3-note' ? 3 : 4);
+      
+      console.log(`  Generated: ${measureCount} measures, ${noteCount} notes (expected: ${expectedNotes})`);
+      
+      if (measureCount !== params.bars) {
+        console.warn(`  ⚠ Warning: Expected ${params.bars} measures, got ${measureCount}`);
+      }
+      if (noteCount !== expectedNotes) {
+        console.warn(`  ⚠ Warning: Expected ${expectedNotes} notes, got ${noteCount}`);
+      }
+      
       const filename = generateFilename(params);
       const filepath = saveMusicXML(xml, filename);
       
@@ -94,6 +137,9 @@ Commands:
       console.log(`\nYou can open this file in Guitar Pro 8, Sibelius or any MusicXML-compatible software.`);
     } catch (error) {
       console.error(`\n❌ Error: ${error.message}`);
+      if (error.stack) {
+        console.error(`Stack: ${error.stack}`);
+      }
     }
     
     prompt();

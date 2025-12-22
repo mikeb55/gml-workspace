@@ -254,8 +254,206 @@ function findBestPosition(stack, stringSet, anchorFret = 5, previousPositions = 
   return bestCombination;
 }
 
+/**
+ * Generate MusicXML for multi-scale progression
+ */
+function generateMultiScaleMusicXML(params) {
+  const { segments, bars, stackType, noteValue, stringSet, tempo = 108 } = params;
+  
+  // Calculate divisions and note type
+  let divisions, noteDuration, noteType;
+  if (noteValue === 'half') {
+    divisions = 1;
+    noteDuration = 2;
+    noteType = 'half';
+  } else if (noteValue === 'quarter') {
+    divisions = 1;
+    noteDuration = 1;
+    noteType = 'quarter';
+  } else if (noteValue === 'eighth') {
+    divisions = 2;
+    noteDuration = 1;
+    noteType = 'eighth';
+  } else if (noteValue === 'sixteenth' || noteValue === '16th') {
+    divisions = 4;
+    noteDuration = 1;
+    noteType = '16th';
+  } else {
+    divisions = 1;
+    noteDuration = 1;
+    noteType = 'quarter';
+  }
+  
+  // Determine string set
+  let finalStringSet;
+  if (stringSet && Array.isArray(stringSet)) {
+    finalStringSet = stringSet;
+  } else {
+    if (stackType === '3-note') {
+      finalStringSet = [5, 4, 3];
+    } else {
+      finalStringSet = [5, 4, 3, 2];
+    }
+  }
+  
+  // Build scale map: which scale to use for each bar
+  const barToScale = [];
+  for (const segment of segments) {
+    for (let i = 0; i < segment.bars; i++) {
+      const barIndex = segment.startBar + i;
+      barToScale[barIndex] = {
+        root: segment.root,
+        scale: segment.scale,
+        scalePcs: getScalePitchClasses(segment.scale, segment.root)
+      };
+    }
+  }
+  
+  // Generate stacks for each bar using its assigned scale
+  const stacks = [];
+  for (let bar = 0; bar < bars; bar++) {
+    const scaleInfo = barToScale[bar];
+    if (!scaleInfo) {
+      // Fallback to last scale if bar not assigned
+      const lastSegment = segments[segments.length - 1];
+      scaleInfo = {
+        root: lastSegment.root,
+        scale: lastSegment.scale,
+        scalePcs: getScalePitchClasses(lastSegment.scale, lastSegment.root)
+      };
+    }
+    const stackRootIndex = bar % 7;
+    const stack = generateQuartalStack(scaleInfo.scalePcs, stackRootIndex, stackType);
+    stacks.push(stack);
+  }
+  
+  // Generate XML (same structure as single-scale)
+  let xml = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
+<score-partwise version="3.1">
+  <part-list>
+    <score-part id="P1">
+      <part-name>Guitar</part-name>
+    </score-part>
+  </part-list>
+  <part id="P1">`;
+  
+  let previousPositions = null;
+  
+  for (let bar = 0; bar < bars; bar++) {
+    xml += `
+    <measure number="${bar + 1}">`;
+    if (bar === 0) {
+      xml += `
+      <attributes>
+        <divisions>${divisions}</divisions>
+        <key>
+          <fifths>0</fifths>
+        </key>
+        <time>
+          <beats>4</beats>
+          <beat-type>4</beat-type>
+        </time>
+        <clef>
+          <sign>G</sign>
+          <line>2</line>
+        </clef>
+      </attributes>
+      <direction>
+        <sound tempo="${tempo}"/>
+      </direction>`;
+    }
+    
+    const stack = stacks[bar];
+    const scaleInfo = barToScale[bar] || barToScale[barToScale.length - 1];
+    
+    // Find best position with voice-leading
+    const anchorFret = previousPositions 
+      ? Math.round(previousPositions.reduce((sum, p) => sum + p.fret, 0) / previousPositions.length)
+      : 5 + (bar * 2);
+    const positions = findBestPosition(stack, finalStringSet, anchorFret, previousPositions);
+    
+    if (!positions || positions.length !== stack.length) {
+      throw new Error(`findBestPosition returned ${positions ? positions.length : 0} positions, expected ${stack.length}`);
+    }
+    
+    positions.sort((a, b) => b.stringIndex - a.stringIndex);
+    
+    // Generate notes
+    for (let voice = 0; voice < stack.length; voice++) {
+      const position = positions[voice];
+      if (position) {
+        const midiNote = position.midiNote;
+        const octave = Math.floor(midiNote / 12) - 1;
+        const pitchClass = (position.pitchClass !== undefined && position.pitchClass >= 0) ? position.pitchClass : stack[voice];
+        if (pitchClass < 0 || pitchClass > 11) {
+          throw new Error(`Invalid pitchClass ${pitchClass} for voice ${voice}`);
+        }
+        const noteName = getNoteName(pitchClass, scaleInfo.scale === 'dorian' || scaleInfo.scale === 'minor');
+        if (!noteName) {
+          throw new Error(`getNoteName returned undefined for pitchClass ${pitchClass}`);
+        }
+        const step = noteName.replace(/[#b]/, '');
+        const alter = noteName.includes('#') ? 1 : (noteName.includes('b') ? -1 : null);
+        
+        if (voice > 0) {
+          xml += `
+      <note>
+        <chord/>`;
+        } else {
+          xml += `
+      <note>`;
+        }
+        xml += `
+        <pitch>
+          <step>${step}</step>`;
+        if (alter !== null) {
+          xml += `
+          <alter>${alter}</alter>`;
+        }
+        xml += `
+          <octave>${octave}</octave>
+        </pitch>
+        <duration>${noteDuration}</duration>
+        <type>${noteType}</type>
+        <voice>1</voice>
+      </note>`;
+      }
+    }
+    
+    // Fill measure
+    const beatsPerMeasure = 4;
+    const totalDurationNeeded = beatsPerMeasure * divisions;
+    const chordDuration = noteDuration;
+    const remainingDuration = totalDurationNeeded - chordDuration;
+    
+    if (remainingDuration > 0) {
+      xml += `
+      <forward>
+        <duration>${remainingDuration}</duration>
+      </forward>`;
+    }
+    
+    xml += `
+    </measure>`;
+    previousPositions = positions.map(p => ({ ...p }));
+  }
+  
+  xml += `
+  </part>
+</score-partwise>`;
+  
+  return xml;
+}
+
 function generateMusicXML(params) {
-  const { root, scale, stackType, bars, noteValue, stringSet } = params;
+  // Handle multi-scale commands
+  if (params.multiScale && params.segments) {
+    return generateMultiScaleMusicXML(params);
+  }
+  
+  // Single scale (original logic)
+  const { root, scale, stackType, bars, noteValue, stringSet, tempo = 108 } = params;
   const scalePcs = getScalePitchClasses(scale, root);
   
   // Calculate divisions and note type based on note value
@@ -338,7 +536,10 @@ function generateMusicXML(params) {
           <sign>G</sign>
           <line>2</line>
         </clef>
-      </attributes>`;
+      </attributes>
+      <direction>
+        <sound tempo="${tempo}"/>
+      </direction>`;
     }
     
     const stack = stacks[bar];
@@ -437,7 +638,132 @@ function generateMusicXML(params) {
 function parseCommand(command) {
   const lower = command.toLowerCase();
   
-  // Extract root note - look for note names before scale words
+  // Check for multi-scale commands (up to 5 scales)
+  // Patterns: "C major bars 1-4, F lydian bars 5-8" or "C major (4 bars), F lydian (4 bars)"
+  const multiScalePatterns = [
+    // Pattern 1: "X scale bars N-M, Y scale bars N-M"
+    /([A-G][#b]?)\s+(major|minor|dorian|mixolydian|lydian|phrygian|locrian|ionian|aeolian)\s+(?:bars?|bar)\s+(\d+)(?:\s*-\s*(\d+))?/gi,
+    // Pattern 2: "X scale (N bars)"
+    /([A-G][#b]?)\s+(major|minor|dorian|mixolydian|lydian|phrygian|locrian|ionian|aeolian)\s*\((\d+)\s*bars?\)/gi,
+    // Pattern 3: "X scale, Y scale, Z scale - N bars each"
+    /([A-G][#b]?)\s+(major|minor|dorian|mixolydian|lydian|phrygian|locrian|ionian|aeolian)/gi
+  ];
+  
+  // Try to detect multi-scale command
+  let multiScaleSegments = [];
+  let totalBars = 0;
+  
+  // Try pattern 1: "X scale bars N-M" (handle "4-note" before or after scale)
+  // Match: root, scale, optional "4-note", "bars", numbers
+  // OR: root, "4-note", scale, "bars", numbers
+  const pattern1Regex = /([A-G][#b]?)\s+(?:(?:4-note|four\s+note|4\s+note)\s+)?(major|minor|dorian|mixolydian|lydian|phrygian|locrian|ionian|aeolian)\s+(?:4-note|four\s+note|4\s+note)?\s*(?:bars?|bar)\s+(\d+)(?:\s*-\s*(\d+))?/gi;
+  const pattern1Matches = [];
+  let match;
+  while ((match = pattern1Regex.exec(command)) !== null) {
+    pattern1Matches.push(match);
+  }
+  
+  if (pattern1Matches.length > 1 && pattern1Matches.length <= 5) {
+    for (const match of pattern1Matches) {
+      const root = match[1];
+      const scale = match[2].toLowerCase();
+      const startBar = parseInt(match[3]);
+      const endBar = match[4] ? parseInt(match[4]) : startBar;
+      const bars = endBar - startBar + 1;
+      multiScaleSegments.push({ root, scale, bars, startBar: startBar - 1 }); // 0-indexed
+      totalBars = Math.max(totalBars, endBar);
+    }
+  }
+  
+  // Try pattern 2: "X scale (N bars)" (handle "4-note" before or after scale)
+  if (multiScaleSegments.length === 0) {
+    const pattern2Regex = /([A-G][#b]?)\s+(?:(?:4-note|four\s+note|4\s+note)\s+)?(major|minor|dorian|mixolydian|lydian|phrygian|locrian|ionian|aeolian)\s+(?:4-note|four\s+note|4\s+note)?\s*\((\d+)\s*bars?\)/gi;
+    const pattern2Matches = [];
+    let match;
+    while ((match = pattern2Regex.exec(command)) !== null) {
+      pattern2Matches.push(match);
+    }
+    
+    if (pattern2Matches.length > 1 && pattern2Matches.length <= 5) {
+      let currentBar = 0;
+      for (const match of pattern2Matches) {
+        const root = match[1];
+        const scale = match[2].toLowerCase();
+        const bars = parseInt(match[3]);
+        multiScaleSegments.push({ root, scale, bars, startBar: currentBar });
+        currentBar += bars;
+        totalBars = currentBar;
+      }
+    }
+  }
+  
+  // Try pattern 3: "X scale, Y scale, Z scale - N bars each" (handle up to 6 scales gracefully)
+  if (multiScaleSegments.length === 0) {
+    const pattern3Matches = [...command.matchAll(/([A-G][#b]?)\s+(?:4-note|four\s+note|4\s+note)?\s*(major|minor|dorian|mixolydian|lydian|phrygian|locrian|ionian|aeolian)/gi)];
+    const barsEachMatch = command.match(/(\d+)\s*bars?\s*each/i);
+    if (pattern3Matches.length > 1 && pattern3Matches.length <= 6 && barsEachMatch) {
+      // Limit to 5 scales max, but handle gracefully
+      const maxScales = Math.min(pattern3Matches.length, 5);
+      const barsEach = parseInt(barsEachMatch[1]);
+      let currentBar = 0;
+      for (let i = 0; i < maxScales; i++) {
+        const match = pattern3Matches[i];
+        const root = match[1];
+        const scale = match[2].toLowerCase();
+        multiScaleSegments.push({ root, scale, bars: barsEach, startBar: currentBar });
+        currentBar += barsEach;
+        totalBars = currentBar;
+      }
+    }
+  }
+  
+  // If multi-scale detected, return segments
+  if (multiScaleSegments.length > 1) {
+    // Extract common parameters
+    const scaleKeywords = ['major', 'minor', 'dorian', 'mixolydian', 'lydian', 'phrygian', 'locrian', 'ionian', 'aeolian'];
+    const validNotes = ['C', 'C#', 'Db', 'D', 'D#', 'Eb', 'E', 'F', 'F#', 'Gb', 'G', 'G#', 'Ab', 'A', 'A#', 'Bb', 'B'];
+    
+    // Extract stack type
+    let stackType = '3-note';
+    if (lower.includes('4-note') || lower.includes('four note') || lower.includes('4 note')) stackType = '4-note';
+    
+    // Extract note value
+    let noteValue = 'quarter';
+    if (lower.includes('sixteenth') || lower.includes('16th')) noteValue = 'sixteenth';
+    else if (lower.includes('eighth') || lower.includes('8th')) noteValue = 'eighth';
+    else if (lower.includes('half')) noteValue = 'half';
+    else if (lower.includes('quarter')) noteValue = 'quarter';
+    
+    // Extract string set (if specified)
+    let stringSet = null;
+    const stringSetMatch = command.match(/\b(?:strings?|string\s*set)\s*([1-6](?:-[1-6])+)/i);
+    if (stringSetMatch) {
+      const setStr = stringSetMatch[1];
+      stringSet = setStr.split('-').map(s => parseInt(s) - 1).reverse();
+    }
+    
+    // Extract tempo (default 108 bpm)
+    let tempo = 108;
+    const tempoMatch = command.match(/\b(?:tempo|bpm|at|speed)\s*(\d+)\b/i) || command.match(/\b(\d+)\s*(?:bpm|tempo)\b/i);
+    if (tempoMatch) {
+      const parsedTempo = parseInt(tempoMatch[1]);
+      if (parsedTempo > 0 && parsedTempo <= 300) {
+        tempo = parsedTempo;
+      }
+    }
+    
+    return { 
+      multiScale: true, 
+      segments: multiScaleSegments, 
+      bars: totalBars, 
+      stackType, 
+      noteValue, 
+      stringSet,
+      tempo
+    };
+  }
+  
+  // Single scale parsing (original logic)
   const scaleKeywords = ['major', 'minor', 'dorian', 'mixolydian', 'lydian', 'phrygian', 'locrian', 'ionian', 'aeolian'];
   const validNotes = ['C', 'C#', 'Db', 'D', 'D#', 'Eb', 'E', 'F', 'F#', 'Gb', 'G', 'G#', 'Ab', 'A', 'A#', 'Bb', 'B'];
   let root = null;
@@ -528,7 +854,17 @@ function parseCommand(command) {
     stringSet = setStr.split('-').map(s => parseInt(s) - 1).reverse(); // Convert to 0-indexed, reverse for low to high
   }
   
-  return { root, scale, stackType, bars, noteValue, stringSet };
+  // Extract tempo (default 108 bpm)
+  let tempo = 108;
+  const tempoMatch = command.match(/\b(?:tempo|bpm|at|speed)\s*(\d+)\b/i) || command.match(/\b(\d+)\s*(?:bpm|tempo)\b/i);
+  if (tempoMatch) {
+    const parsedTempo = parseInt(tempoMatch[1]);
+    if (parsedTempo > 0 && parsedTempo <= 300) {
+      tempo = parsedTempo;
+    }
+  }
+  
+  return { root, scale, stackType, bars, noteValue, stringSet, tempo };
 }
 
 module.exports = {

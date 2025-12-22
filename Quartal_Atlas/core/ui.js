@@ -25,6 +25,7 @@ const UIController = {
         lfvActive: false,
         lfvMinFret: 1,
         lfvMaxFret: 4,
+        inversionCycleMode: false,
         showTargetNoteOnly: false,
         hideContextNotes: false,
         viewMode: 'portrait',
@@ -152,6 +153,13 @@ const UIController = {
             });
         }
         
+        const inversionCycleModeBtn = document.getElementById('inversionCycleMode');
+        if (inversionCycleModeBtn) {
+            inversionCycleModeBtn.addEventListener('click', () => {
+                this.toggleInversionCycleMode();
+            });
+        }
+        
         const showTargetNoteOnlyBtn = document.getElementById('showTargetNoteOnly');
         if (showTargetNoteOnlyBtn) {
             showTargetNoteOnlyBtn.addEventListener('click', () => {
@@ -255,6 +263,20 @@ const UIController = {
     },
     
     /**
+     * Toggle inversion cycle mode (manual navigation only - no auto-advance)
+     */
+    toggleInversionCycleMode() {
+        this.state.inversionCycleMode = !this.state.inversionCycleMode;
+        const btn = document.getElementById('inversionCycleMode');
+        if (btn) {
+            btn.setAttribute('data-mode', this.state.inversionCycleMode ? 'on' : 'off');
+            btn.textContent = `Inversion Cycle Mode: ${this.state.inversionCycleMode ? 'ON' : 'OFF'}`;
+        }
+        // No auto-advance - just a visual indicator that manual cycling is enabled
+        this.updateDisplay();
+    },
+    
+    /**
      * Toggle show target note only
      */
     toggleShowTargetNoteOnly() {
@@ -340,13 +362,15 @@ const UIController = {
         const stringSetIndices = QuartalEngine.getStringSetIndices(this.state.stringSet);
         const numFrets = this.endFret - this.startFret + 1;
         const width = numFrets * this.fretWidth + this.nutWidth;
-        const height = this.numStrings * this.stringSpacing;
+        const fretboardHeight = this.numStrings * this.stringSpacing;
+        const markerAreaHeight = 40; // Space below fretboard for markers
+        const totalHeight = fretboardHeight + markerAreaHeight;
         
         const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         svg.setAttribute('class', 'fretboard-svg');
         svg.setAttribute('width', width);
-        svg.setAttribute('height', height);
-        svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+        svg.setAttribute('height', totalHeight);
+        svg.setAttribute('viewBox', `0 0 ${width} ${totalHeight}`);
         
         // Draw nut
         const nut = document.createElementNS('http://www.w3.org/2000/svg', 'line');
@@ -354,7 +378,7 @@ const UIController = {
         nut.setAttribute('x1', this.nutWidth / 2);
         nut.setAttribute('y1', 0);
         nut.setAttribute('x2', this.nutWidth / 2);
-        nut.setAttribute('y2', height);
+        nut.setAttribute('y2', fretboardHeight);
         svg.appendChild(nut);
         
         // Draw strings
@@ -386,7 +410,7 @@ const UIController = {
             fret.setAttribute('x1', x);
             fret.setAttribute('y1', 0);
             fret.setAttribute('x2', x);
-            fret.setAttribute('y2', height);
+            fret.setAttribute('y2', fretboardHeight);
             svg.appendChild(fret);
             
             // Fret number
@@ -397,6 +421,23 @@ const UIController = {
                 fretNum.setAttribute('y', this.numStrings * this.stringSpacing + 15);
                 fretNum.textContent = f + this.startFret;
                 svg.appendChild(fretNum);
+            }
+            
+        }
+        
+        // Draw fret markers below fretboard (standard guitar positions: 3, 5, 7, 9, 12, 15, 17)
+        const markerPositions = [3, 5, 7, 9, 12, 15, 17];
+        for (const markerFret of markerPositions) {
+            if (markerFret >= this.startFret && markerFret <= this.endFret) {
+                const markerX = this.nutWidth + (markerFret - this.startFret) * this.fretWidth - this.fretWidth / 2;
+                const markerY = fretboardHeight + 20; // Position below fretboard
+                const marker = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                marker.setAttribute('class', 'fret-marker');
+                marker.setAttribute('cx', markerX);
+                marker.setAttribute('cy', markerY);
+                marker.setAttribute('r', 5);
+                marker.setAttribute('fill', '#666');
+                svg.appendChild(marker);
             }
         }
         
@@ -417,136 +458,176 @@ const UIController = {
     },
     
     /**
-     * Update note positions on fretboard
-     * Uses position-first anchoring with comprehensive position collection (like Triad Atlas)
+     * Place notes for a single inversion
+     * Searches ALL positions across the fretboard, then selects the best compact shape
+     * @param {Array<number>} invertedTones - Inverted quartal tones
+     * @param {Array<number>} stringSetIndices - String set indices
+     * @param {number} anchorFret - Anchor fret position (preferred position)
+     * @param {number} anchorStringIndex - Anchor string index
+     * @param {number} inversionIndex - Inversion index (0-3) for visual distinction
+     * @returns {Array} Array of placed note objects
      */
-    updateNotes() {
-        const notesGroup = document.getElementById('notes-group');
-        if (!notesGroup) return;
+    placeInversionNotes(invertedTones, stringSetIndices, anchorFret, anchorStringIndex, inversionIndex) {
+        // CRITICAL: Inversions must map tones to strings in order
+        // Tone[0] → String[0] (lowest string), Tone[1] → String[1], etc.
+        // This ensures inversions produce visibly different shapes
         
-        // Clear existing notes
-        notesGroup.innerHTML = '';
-        
-        const quartalTones = QuartalEngine.getQuartalTones(this.state.root, this.state.type, this.state.scale);
-        const invertedTones = QuartalEngine.applyInversion(quartalTones, this.state.inversion);
-        const stringSetIndices = QuartalEngine.getStringSetIndices(this.state.stringSet);
-        
-        // Determine anchor position (position-first anchoring)
-        let anchorFret = 5; // Default mid-neck
-        if (this.state.lfvActive) {
-            anchorFret = Math.floor((this.state.lfvMinFret + this.state.lfvMaxFret) / 2);
-        }
-        const anchorStringIndex = stringSetIndices[Math.floor(stringSetIndices.length / 2)];
-        
-        // STEP 1: Find anchor tone (middle tone in inversion)
-        const anchorToneIndex = Math.floor(invertedTones.length / 2);
-        const anchorPitchClass = invertedTones[anchorToneIndex] % 12;
-        
-        // STEP 2: Place anchor tone on anchor string closest to anchorFret
         const placedNotes = [];
-        let anchorPosition = null;
-        let minDistance = Infinity;
         
-        for (let fret = this.startFret; fret <= this.endFret; fret++) {
-            const midiNote = QuartalEngine.getMidiNote(anchorStringIndex, fret);
-            const pitchClass = QuartalEngine.getPitchClass(midiNote);
+        // STEP 1: For each tone in the inversion, find positions on its assigned string
+        // Map inverted tones to strings: tone[i] goes on stringSetIndices[i]
+        for (let i = 0; i < invertedTones.length && i < stringSetIndices.length; i++) {
+            const targetPitchClass = invertedTones[i] % 12;
+            const assignedStringIndex = stringSetIndices[i];
+            const positions = [];
             
-            if (pitchClass === anchorPitchClass) {
-                const distance = Math.abs(fret - anchorFret);
-                if (distance < minDistance) {
-                    minDistance = distance;
-                    anchorPosition = { fret, midiNote, stringIndex: anchorStringIndex, pitchClass: anchorPitchClass };
+            // Find ALL positions of this pitch class on the assigned string
+            for (let fret = this.startFret; fret <= this.endFret; fret++) {
+                const midiNote = QuartalEngine.getMidiNote(assignedStringIndex, fret);
+                const pitchClass = QuartalEngine.getPitchClass(midiNote);
+                
+                if (pitchClass === targetPitchClass) {
+                    positions.push({
+                        fret,
+                        midiNote,
+                        stringIndex: assignedStringIndex,
+                        pitchClass: targetPitchClass
+                    });
                 }
             }
-        }
-        
-        // Fallback: if anchor string has no valid position, find closest on any string
-        if (!anchorPosition) {
-            for (let i = 0; i < invertedTones.length && i < stringSetIndices.length; i++) {
-                const targetPitchClass = invertedTones[i] % 12;
+            
+            // If no positions found on assigned string, allow fallback to adjacent strings
+            if (positions.length === 0) {
+                // Try adjacent strings as fallback
                 for (const stringIndex of stringSetIndices) {
+                    if (stringIndex === assignedStringIndex) continue;
                     for (let fret = this.startFret; fret <= this.endFret; fret++) {
                         const midiNote = QuartalEngine.getMidiNote(stringIndex, fret);
                         const pitchClass = QuartalEngine.getPitchClass(midiNote);
                         if (pitchClass === targetPitchClass) {
-                            const distance = Math.abs(fret - anchorFret);
-                            if (distance < minDistance) {
-                                minDistance = distance;
-                                anchorPosition = { fret, midiNote, stringIndex, pitchClass: targetPitchClass };
-                            }
+                            positions.push({
+                                fret,
+                                midiNote,
+                                stringIndex: stringIndex,
+                                pitchClass: targetPitchClass
+                            });
                         }
                     }
                 }
             }
+            
+            // Store positions for this tone
+            if (positions.length > 0) {
+                placedNotes.push({
+                    toneIndex: i,
+                    positions: positions,
+                    assignedString: assignedStringIndex
+                });
+            }
         }
         
-        if (anchorPosition) {
-            // Place anchor note
-            const toneRole = QuartalEngine.getToneRole(anchorPosition.midiNote, this.state.root, this.state.type, this.state.scale);
-            placedNotes.push({
-                stringIndex: anchorPosition.stringIndex,
-                fret: anchorPosition.fret,
-                midiNote: anchorPosition.midiNote,
-                pitchClass: anchorPosition.pitchClass,
-                toneRole: toneRole
-            });
+        // STEP 2: Find the best combination of positions that forms a compact shape
+        let bestShape = null;
+        let bestScore = Infinity;
+        
+        // Try different combinations of positions for each tone
+        // Start with the middle tone (anchor) near anchorFret
+        const anchorToneIndex = Math.floor(placedNotes.length / 2);
+        if (placedNotes.length === 0) return [];
+        
+        const anchorTone = placedNotes[anchorToneIndex];
+        
+        // Try each position of the anchor tone
+        for (const anchorPos of anchorTone.positions) {
+            const distanceFromAnchor = Math.abs(anchorPos.fret - anchorFret);
+            if (distanceFromAnchor > 10) continue; // Skip positions too far from anchor
             
-            const actualAnchorFret = anchorPosition.fret;
-            const minFret = Math.max(this.startFret, actualAnchorFret - this.MAX_FRET_SPAN);
-            const maxFret = Math.min(this.endFret, actualAnchorFret + this.MAX_FRET_SPAN);
+            const shape = [{ ...anchorPos, toneIndex: anchorToneIndex }];
+            const usedStrings = new Set([anchorPos.stringIndex]);
             
-            // Track which tones and strings are already placed
-            const placedToneIndices = new Set([anchorToneIndex]);
-            const placedStringIndices = new Set([anchorPosition.stringIndex]);
-            
-            // STEP 3: Place remaining tones on adjacent strings, within 4-fret span
-            for (let i = 0; i < invertedTones.length && i < stringSetIndices.length; i++) {
-                if (placedToneIndices.has(i)) continue;
+            // Place remaining tones
+            for (let toneIdx = 0; toneIdx < placedNotes.length; toneIdx++) {
+                if (toneIdx === anchorToneIndex) continue;
                 
-                const targetPitchClass = invertedTones[i] % 12;
-                let bestPosition = null;
-                let bestScore = Infinity;
+                const toneData = placedNotes[toneIdx];
+                let bestCandidate = null;
+                let bestCandidateScore = Infinity;
                 
-                // Try each available string (prefer adjacent to already-placed strings)
-                for (const stringIndex of stringSetIndices) {
-                    if (placedStringIndices.has(stringIndex)) continue;
+                for (const candidate of toneData.positions) {
+                    // Prefer assigned string
+                    const isAssignedString = candidate.stringIndex === toneData.assignedString;
+                    const stringBonus = isAssignedString ? 0 : 1000; // Heavy penalty for wrong string
                     
-                    // Find positions of this pitch class on this string within span
-                    for (let fret = minFret; fret <= maxFret; fret++) {
-                        const midiNote = QuartalEngine.getMidiNote(stringIndex, fret);
-                        const pitchClass = QuartalEngine.getPitchClass(midiNote);
-                        
-                        if (pitchClass === targetPitchClass) {
-                            // Score: distance from anchor (prefer closer)
-                            const distance = Math.abs(fret - actualAnchorFret);
-                            // Bonus for adjacent strings
-                            const stringDistance = Math.abs(stringIndex - anchorPosition.stringIndex);
-                            const score = distance * 10 + stringDistance;
-                            
-                            if (score < bestScore) {
-                                bestScore = score;
-                                bestPosition = { fret, midiNote, stringIndex, pitchClass: targetPitchClass };
-                            }
-                        }
+                    // Prefer adjacent strings
+                    const stringDistance = Math.min(
+                        ...Array.from(usedStrings).map(s => Math.abs(candidate.stringIndex - s))
+                    );
+                    
+                    // Prefer compact shapes
+                    const currentFrets = shape.map(p => p.fret);
+                    const minFret = currentFrets.length > 0 ? Math.min(...currentFrets) : anchorPos.fret;
+                    const maxFret = currentFrets.length > 0 ? Math.max(...currentFrets) : anchorPos.fret;
+                    const span = Math.max(maxFret, candidate.fret) - Math.min(minFret, candidate.fret);
+                    
+                    // Score: prefer assigned string, compact shapes, adjacent strings, near anchor
+                    const score = stringBonus + (span > this.MAX_FRET_SPAN ? 1000 : span * 10) + 
+                                  stringDistance * 5 + Math.abs(candidate.fret - anchorFret);
+                    
+                    if (score < bestCandidateScore) {
+                        bestCandidateScore = score;
+                        bestCandidate = candidate;
                     }
                 }
                 
-                if (bestPosition) {
-                    const toneRole = QuartalEngine.getToneRole(bestPosition.midiNote, this.state.root, this.state.type, this.state.scale);
-                    placedNotes.push({
-                        stringIndex: bestPosition.stringIndex,
-                        fret: bestPosition.fret,
-                        midiNote: bestPosition.midiNote,
-                        pitchClass: bestPosition.pitchClass,
-                        toneRole: toneRole
-                    });
-                    placedToneIndices.add(i);
-                    placedStringIndices.add(bestPosition.stringIndex);
+                if (bestCandidate) {
+                    shape.push({ ...bestCandidate, toneIndex: toneIdx });
+                    usedStrings.add(bestCandidate.stringIndex);
+                }
+            }
+            
+            // If we placed all tones, evaluate this shape
+            if (shape.length === placedNotes.length) {
+                const frets = shape.map(p => p.fret);
+                const span = Math.max(...frets) - Math.min(...frets);
+                const avgDistanceFromAnchor = shape.reduce((sum, p) => sum + Math.abs(p.fret - anchorFret), 0) / shape.length;
+                
+                // Check if all tones are on their assigned strings
+                const allOnAssignedStrings = shape.every(pos => {
+                    const toneData = placedNotes[pos.toneIndex];
+                    return pos.stringIndex === toneData.assignedString;
+                });
+                
+                // Score: prefer compact shapes, all on assigned strings, close to anchor
+                const shapeScore = (span > this.MAX_FRET_SPAN ? 1000 : span * 10) + 
+                                  (allOnAssignedStrings ? 0 : 500) + // Penalty if not all on assigned strings
+                                  avgDistanceFromAnchor;
+                
+                if (shapeScore < bestScore) {
+                    bestScore = shapeScore;
+                    bestShape = shape;
                 }
             }
         }
         
-        // STEP 4: CLOSED-POSITION CHECK - Enforce max 4-fret span
+        // STEP 3: Convert best shape to placed notes with tone roles
+        const finalPlacedNotes = [];
+        if (bestShape) {
+            for (const pos of bestShape) {
+                const toneRole = QuartalEngine.getToneRole(pos.midiNote, this.state.root, this.state.type, this.state.scale);
+                finalPlacedNotes.push({
+                    stringIndex: pos.stringIndex,
+                    fret: pos.fret,
+                    midiNote: pos.midiNote,
+                    pitchClass: pos.pitchClass,
+                    toneRole: toneRole,
+                    inversionIndex: inversionIndex
+                });
+            }
+        }
+        
+        return finalPlacedNotes;
+        
+        // STEP 4: CLOSED-POSITION CHECK - If shape is too wide, try to compact it
         if (placedNotes.length > 0) {
             const frets = placedNotes.map(n => n.fret);
             const minFret = Math.min(...frets);
@@ -554,9 +635,10 @@ const UIController = {
             const span = maxFret - minFret;
             
             if (span > this.MAX_FRET_SPAN) {
-                // Re-position all notes toward anchorFret, clamped to anchorFret ± 2
-                const clampedMinFret = Math.max(this.startFret, anchorFret - 2);
-                const clampedMaxFret = Math.min(this.endFret, anchorFret + 2);
+                // Try to find a more compact version
+                const avgFret = (minFret + maxFret) / 2;
+                const clampedMinFret = Math.max(this.startFret, Math.floor(avgFret) - 2);
+                const clampedMaxFret = Math.min(this.endFret, Math.floor(avgFret) + 2);
                 
                 const repositionedNotes = [];
                 
@@ -566,13 +648,13 @@ const UIController = {
                     let bestMidi = null;
                     let minDistance = Infinity;
                     
-                    // Search within clamped range
+                    // Search within clamped range on the same string
                     for (let fret = clampedMinFret; fret <= clampedMaxFret; fret++) {
                         const midiNote = QuartalEngine.getMidiNote(note.stringIndex, fret);
                         const pitchClass = QuartalEngine.getPitchClass(midiNote);
                         
                         if (pitchClass === targetPitchClass) {
-                            const distance = Math.abs(fret - anchorFret);
+                            const distance = Math.abs(fret - avgFret);
                             if (distance < minDistance) {
                                 minDistance = distance;
                                 bestFret = fret;
@@ -588,26 +670,66 @@ const UIController = {
                             fret: bestFret,
                             midiNote: bestMidi,
                             pitchClass: targetPitchClass,
-                            toneRole: toneRole
+                            toneRole: toneRole,
+                            inversionIndex: inversionIndex
                         });
+                    } else {
+                        // Keep original if no compact position found
+                        repositionedNotes.push(note);
                     }
                 }
                 
-                // Replace placedNotes with repositioned notes
-                placedNotes.length = 0;
-                placedNotes.push(...repositionedNotes);
+                // Only replace if we successfully repositioned all notes
+                if (repositionedNotes.length === placedNotes.length) {
+                    const newFrets = repositionedNotes.map(n => n.fret);
+                    const newSpan = Math.max(...newFrets) - Math.min(...newFrets);
+                    if (newSpan <= this.MAX_FRET_SPAN) {
+                        placedNotes.length = 0;
+                        placedNotes.push(...repositionedNotes);
+                    }
+                }
             }
         }
         
-        // Get top note index
+        return placedNotes;
+    },
+    
+    /**
+     * Update note positions on fretboard
+     * Uses position-first anchoring with comprehensive position collection (like Triad Atlas)
+     */
+    updateNotes() {
+        const notesGroup = document.getElementById('notes-group');
+        if (!notesGroup) return;
+        
+        // Clear existing notes
+        notesGroup.innerHTML = '';
+        
+        const quartalTones = QuartalEngine.getQuartalTones(this.state.root, this.state.type, this.state.scale);
+        const stringSetIndices = QuartalEngine.getStringSetIndices(this.state.stringSet);
+        
+        // Determine anchor position (position-first anchoring)
+        // Use position from string set if specified, otherwise default or LFV
+        let anchorFret = QuartalEngine.getAnchorFretForPosition(this.state.stringSet);
+        if (this.state.lfvActive) {
+            anchorFret = Math.floor((this.state.lfvMinFret + this.state.lfvMaxFret) / 2);
+        }
+        const anchorStringIndex = stringSetIndices[Math.floor(stringSetIndices.length / 2)];
+        
+        // Show single inversion (one at a time)
+        const invertedTones = QuartalEngine.applyInversion(quartalTones, this.state.inversion);
+        const placedNotes = this.placeInversionNotes(invertedTones, stringSetIndices, anchorFret, anchorStringIndex, this.state.inversion);
+        
+        // Get top note info for current inversion
         const topNoteIndex = QuartalEngine.getTopNoteIndex(invertedTones, this.state.inversion);
         const topNotePitchClass = invertedTones[topNoteIndex] % 12;
         
-        // Render notes
+        // Render all placed notes
         for (const note of placedNotes) {
             const isTopNote = note.pitchClass === topNotePitchClass;
-            const isVisible = !this.state.showTargetNoteOnly || isTopNote;
             
+            // Visibility filter
+            const isVisible = !this.state.showTargetNoteOnly || isTopNote;
             if (!isVisible) continue;
             
             const x = this.nutWidth + note.fret * this.fretWidth;
@@ -662,7 +784,7 @@ const UIController = {
         }
         
         let info = `<strong>Quartal Voicing:</strong> ${rootName} (${typeLabel})<br>`;
-        info += `<strong>Inversion:</strong> ${inversionNames[this.state.inversion]}<br>`;
+        info += `<strong>Inversion:</strong> ${inversionNames[this.state.inversion]} (${this.state.inversion + 1} of 4)<br>`;
         info += `<strong>String Set:</strong> ${this.state.stringSet}<br>`;
         info += `<strong>Tones:</strong> `;
         

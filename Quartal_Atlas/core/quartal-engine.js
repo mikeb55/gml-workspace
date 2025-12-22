@@ -143,16 +143,34 @@ const QuartalEngine = {
     /**
      * Get string set indices from string set string (e.g., "6-3" -> [5, 4, 3, 2])
      * Quartal voicings need 4 strings, so we have: 6-3, 5-2, 4-1
-     * @param {string} stringSet - "6-3", "5-2", or "4-1"
+     * Position variants: -low (default), -mid, -high
+     * @param {string} stringSet - "6-3", "6-3-mid", "6-3-high", "5-2", "5-2-mid", "5-2-high", "4-1", "4-1-mid", "4-1-high"
      * @returns {Array<number>} Array of string indices (0-based, where 5=string 6, 0=string 1)
      */
     getStringSetIndices(stringSet) {
+        // Extract base string set (remove position suffix)
+        const baseSet = stringSet.replace(/-low$|-mid$|-high$/, '');
         const map = {
             '6-3': [5, 4, 3, 2],  // Strings 6, 5, 4, 3 (indices 5, 4, 3, 2)
             '5-2': [4, 3, 2, 1],  // Strings 5, 4, 3, 2 (indices 4, 3, 2, 1)
             '4-1': [3, 2, 1, 0]   // Strings 4, 3, 2, 1 (indices 3, 2, 1, 0)
         };
-        return map[stringSet] || [];
+        return map[baseSet] || [];
+    },
+    
+    /**
+     * Get preferred anchor fret range for a string set position
+     * @param {string} stringSet - String set with position (e.g., "6-3-mid")
+     * @returns {number} Preferred anchor fret for this position
+     */
+    getAnchorFretForPosition(stringSet) {
+        if (stringSet.includes('-high')) {
+            return 15; // High position: frets 12-19
+        } else if (stringSet.includes('-mid')) {
+            return 8;  // Mid position: frets 5-12
+        } else {
+            return 2;  // Low position: frets 0-7
+        }
     },
     
     /**

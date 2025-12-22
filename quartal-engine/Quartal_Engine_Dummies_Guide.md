@@ -9,13 +9,209 @@ The Quartal Engine is a powerful tool that generates **quartal harmony** (chords
 - Generates 3-note and 4-note quartal chords
 - Supports all major modes (major, minor, dorian, mixolydian, lydian, phrygian, locrian)
 - Works with any root note (C, C#, D, Eb, E, F, F#, G, Ab, A, Bb, B)
+- **NEW: Mix up to 5 different scales/modes in one command!**
 - Multiple note durations (half, quarter, eighth, sixteenth notes)
 - Guitar-friendly voicings (playable positions, 5-fret max reach)
 - Outputs MusicXML files that open directly in Sibelius, Finale, Guitar Pro 8, MuseScore, and Cubase
 
 ---
 
-## Basic Command Structure
+## Multi-Scale Commands (NEW!)
+
+The Quartal Engine can now generate progressions that mix multiple scales and modes in a single command. This is perfect for creating complex harmonic progressions, modal interchange, and extended compositions.
+
+### Three Command Formats
+
+**Format 1: "X scale bars N-M"**
+```
+Generate C major bars 1-4, F lydian bars 5-8, G mixolydian bars 9-12
+```
+
+**Format 2: "X scale (N bars)"**
+```
+Generate C major (4 bars), F lydian (4 bars), G mixolydian (4 bars)
+```
+
+**Format 3: "X scale, Y scale, Z scale - N bars each"**
+```
+Generate C major, F lydian, G mixolydian - 4 bars each
+```
+
+---
+
+## 26 Challenging Multi-Scale Examples
+
+### 3-Scale Progressions
+
+1. **Three Scales, 4 Bars Each (12 bars total)**
+   ```
+   Generate C major bars 1-4, F lydian bars 5-8, G mixolydian bars 9-12
+   ```
+   *Perfect for modal interchange - moves from Ionian to Lydian to Mixolydian*
+
+2. **Three Modes, 2 Bars Each (6 bars total)**
+   ```
+   Generate D dorian bars 1-2, A minor bars 3-4, E phrygian bars 5-6
+   ```
+   *Quick modal shifts - great for short phrases*
+
+3. **Three Different Keys, 3 Bars Each (9 bars total)**
+   ```
+   Generate C# locrian bars 1-3, F# lydian bars 4-6, Bb major bars 7-9
+   ```
+   *Chromatic movement through distant keys*
+
+4. **Three Scales with Eighth Notes**
+   ```
+   Generate D dorian bars 1-4, G mixolydian bars 5-8, C major bars 9-12, eighth notes
+   ```
+   *Faster rhythm creates more movement*
+
+5. **Three Scales with Sixteenth Notes**
+   ```
+   Generate A minor bars 1-4, D dorian bars 5-8, G mixolydian bars 9-12, sixteenth notes
+   ```
+   *Very fast, creates intense rhythmic drive*
+
+6. **Three Scales, Half Notes**
+   ```
+   Generate C# locrian bars 1-4, F# lydian bars 5-8, B major bars 9-12, half notes
+   ```
+   *Slow, spacious - great for ballads*
+
+7. **Three Scales, 8 Bars Each (24 bars total)**
+   ```
+   Generate D dorian bars 1-8, A minor bars 9-16, E phrygian bars 17-24
+   ```
+   *Extended progression - perfect for full chorus*
+
+8. **Three Scales, 4-Note Quartals, Half Notes**
+   ```
+   Generate C# locrian bars 1-4, F# lydian bars 5-8, B major bars 9-12, 4-note quartals, half notes
+   ```
+   *Rich 4-note harmony with slow tempo*
+
+9. **Three Scales, 4-Note Quartals, Sixteenth Notes**
+   ```
+   Generate C major bars 1-4, F lydian bars 5-8, G mixolydian bars 9-12, 4-note quartals, sixteenth notes
+   ```
+   *Dense harmony at fast tempo - very challenging!*
+
+10. **Three Scales with Quarter Notes (Explicit)**
+    ```
+    Generate Eb phrygian bars 1-4, Bb major bars 5-8, F lydian bars 9-12, quarter notes
+    ```
+    *Standard tempo with modal progression*
+
+### 4-Scale Progressions
+
+11. **Four Scales, 4 Bars Each (16 bars total)**
+    ```
+    Generate E minor bars 1-4, B locrian bars 5-8, F lydian bars 9-12, C major bars 13-16
+    ```
+    *Four-part modal journey*
+
+12. **Four Scales, 3 Bars Each (12 bars total)**
+    ```
+    Generate E minor bars 1-3, B locrian bars 4-6, F lydian bars 7-9, C major bars 10-12
+    ```
+    *Shorter segments create quick shifts*
+
+### 5-Scale Progressions
+
+13. **Five Scales, 2 Bars Each (10 bars total)**
+    ```
+    Generate G mixolydian bars 1-2, D dorian bars 3-4, A minor bars 5-6, E phrygian bars 7-8, B locrian bars 9-10
+    ```
+    *Rapid modal movement - very challenging!*
+
+14. **Five Scales, 3 Bars Each (15 bars total)**
+    ```
+    Generate C major bars 1-3, F lydian bars 4-6, G mixolydian bars 7-9, Bb major bars 10-12, Eb phrygian bars 13-15
+    ```
+    *Extended 5-scale progression*
+
+15. **Five Scales, 4 Bars Each (20 bars total)**
+    ```
+    Generate D dorian bars 1-4, A minor bars 5-8, E phrygian bars 9-12, B locrian bars 13-16, F# lydian bars 17-20
+    ```
+    *Long progression with 5 different modes*
+
+16. **Five Scales, 2 Bars Each, Quarter Notes**
+    ```
+    Generate C major bars 1-2, F lydian bars 3-4, G mixolydian bars 5-6, Bb major bars 7-8, Eb phrygian bars 9-10, quarter notes
+    ```
+    *Quick shifts with standard tempo*
+
+17. **Five Scales, 4 Bars Each, Eighth Notes**
+    ```
+    Generate C major bars 1-4, F lydian bars 5-8, G mixolydian bars 9-12, Bb major bars 13-16, Eb phrygian bars 17-20, eighth notes
+    ```
+    *Extended progression with faster rhythm*
+
+### Special Cases
+
+18. **Two Scales, 7 Bars Each (Full Scales - 14 bars total)**
+    ```
+    Generate C major bars 1-7, F lydian bars 8-14
+    ```
+    *Complete scale cycles - one chord per scale degree*
+
+19. **Two Scales, 8 Bars Each (16 bars total)**
+    ```
+    Generate C major bars 1-8, F lydian bars 9-16
+    ```
+    *Extended two-scale progression*
+
+20. **Two Scales, 6 Bars Each (12 bars total)**
+    ```
+    Generate E minor bars 1-6, B locrian bars 7-12
+    ```
+    *Medium-length two-scale progression*
+
+21. **Two Scales, 7 Bars Each (Full Scales)**
+    ```
+    Generate G mixolydian bars 1-7, D dorian bars 8-14
+    ```
+    *Complete modal cycles*
+
+22. **Three Scales, 1 Bar Each (3 bars total)**
+    ```
+    Generate D dorian bars 1-1, A minor bars 2-2, E phrygian bars 3-3
+    ```
+    *Ultra-quick modal shifts - one chord per mode*
+
+23. **Three Scales, 5 Bars Each (15 bars total)**
+    ```
+    Generate C major bars 1-5, F lydian bars 6-10, G mixolydian bars 11-15
+    ```
+    *Medium-length three-scale progression*
+
+### Parentheses Format
+
+24. **Three Scales, Parentheses Format**
+    ```
+    Generate C major (4 bars), F lydian (4 bars), G mixolydian (4 bars)
+    ```
+    *Alternative syntax - same result as Format 1*
+
+25. **Three Modes, Parentheses Format**
+    ```
+    Generate D dorian (2 bars), A minor (2 bars), E phrygian (2 bars)
+    ```
+    *Shorter segments with parentheses*
+
+### Dash Format
+
+26. **Three Scales, Dash Format**
+    ```
+    Generate C major, F lydian, G mixolydian - 4 bars each
+    ```
+    *Clean, readable format for equal-length segments*
+
+---
+
+## Basic Command Structure (Single Scale)
 
 ```
 Generate [ROOT] [SCALE] quartals, [BARS] bars, [DURATION]
@@ -28,7 +224,7 @@ Generate C major quartals, 4 bars, quarter notes
 
 ---
 
-## 20+ Command Examples
+## 20+ Single-Scale Command Examples
 
 ### 3-Note Quartals (Triads)
 

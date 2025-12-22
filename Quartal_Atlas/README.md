@@ -126,3 +126,6 @@ Potential future features (if needed):
 
 However, Quartal Atlas follows the same "fixed lens" philosophy as Triad Atlas—stability and clarity over feature expansion.
 
+
+
+
