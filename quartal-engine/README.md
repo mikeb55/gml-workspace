@@ -36,6 +36,35 @@ The CLI will:
 
 **No JSON files required!** Just natural language commands.
 
+### Multi-Scale Commands
+
+The engine supports multiple scales in a single command using "then" or semicolons:
+
+```
+Generate G mixolydian quartals, 3 bars, quarter notes; Generate G# locrian quartals, 1 bar, quarter notes; Generate C mixolydian quartals, 1 bar, quarter notes
+```
+
+Or using "then":
+
+```
+Generate G mixolydian quartals, 3 bars, then G# locrian quartals, 1 bar, then C mixolydian quartals, 1 bar
+```
+
+### Note Durations
+
+The engine correctly generates the appropriate number of chords per bar based on note duration:
+- **Whole notes**: 1 chord per bar
+- **Half notes**: 2 chords per bar
+- **Quarter notes**: 4 chords per bar
+- **Eighth notes**: 8 chords per bar
+- **16th notes**: 16 chords per bar
+
+Example:
+```
+Generate C major quartals, 4 bars, quarter notes
+```
+This generates 4 bars with 4 quarter-note chords per bar (16 chords total for 3-note quartals).
+
 ### Installation
 ```bash
 cd quartal-engine
@@ -97,4 +126,21 @@ See `STATUS.md` for complete file tree and documentation.
 ## Version Lock Policy
 
 All versions (v1.0, v1.1, v1.2) are LOCKED - no breaking changes allowed. New versions are separate systems.
+
+## Recent Updates
+
+### Note Counting Fix
+- Fixed bug where engine only generated 1 chord per bar regardless of note duration
+- Now correctly generates multiple chords per bar based on duration (whole=1, half=2, quarter=4, eighth=8, 16th=16)
+- Comprehensive test suite: 60 different 4-measure combinations verified
+
+### Multi-Scale Command Support
+- Added support for "then" separator: `Generate X scale N bars, then Y scale N bars, then...`
+- Added support for semicolon separator: `Generate X scale N bars; Generate Y scale N bars; ...`
+- Perfect for following chord progressions from songs
+
+### GCE Jazz Guitar Collection
+- Reference guide for all 18 tunes from GCE Jazz Guitar collection
+- Includes "Greezy" and other jazz standards
+- See `GCE_SONGS_REFERENCE.md` and `GREEZY_COMMAND.md` for examples
 

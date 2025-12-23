@@ -255,34 +255,56 @@ function findBestPosition(stack, stringSet, anchorFret = 5, previousPositions = 
 }
 
 /**
+ * Calculate note duration parameters and chords per bar
+ * Returns: { divisions, noteDuration, noteType, chordsPerBar }
+ */
+function calculateNoteDurationParams(noteValue) {
+  let divisions, noteDuration, noteType, chordsPerBar;
+  
+  if (noteValue === 'whole') {
+    divisions = 1;
+    noteDuration = 4; // Whole note = 4 quarter notes = 4 divisions
+    noteType = 'whole';
+    chordsPerBar = 1; // 1 whole note per bar
+  } else if (noteValue === 'half') {
+    divisions = 1;
+    noteDuration = 2; // Half note = 2 quarter notes = 2 divisions
+    noteType = 'half';
+    chordsPerBar = 2; // 2 half notes per bar
+  } else if (noteValue === 'quarter') {
+    divisions = 1;
+    noteDuration = 1; // Quarter note = 1 division
+    noteType = 'quarter';
+    chordsPerBar = 4; // 4 quarter notes per bar
+  } else if (noteValue === 'eighth') {
+    divisions = 2; // 2 divisions per quarter note (for eighth notes)
+    noteDuration = 1; // Eighth note = 1 division (when divisions=2)
+    noteType = 'eighth';
+    chordsPerBar = 8; // 8 eighth notes per bar
+  } else if (noteValue === 'sixteenth' || noteValue === '16th') {
+    divisions = 4; // 4 divisions per quarter note (for sixteenth notes)
+    noteDuration = 1; // Sixteenth note = 1 division (when divisions=4)
+    noteType = '16th';
+    chordsPerBar = 16; // 16 sixteenth notes per bar
+  } else {
+    // Default to quarter
+    divisions = 1;
+    noteDuration = 1;
+    noteType = 'quarter';
+    chordsPerBar = 4;
+  }
+  
+  return { divisions, noteDuration, noteType, chordsPerBar };
+}
+
+/**
  * Generate MusicXML for multi-scale progression
  */
 function generateMultiScaleMusicXML(params) {
   const { segments, bars, stackType, noteValue, stringSet, tempo = 108 } = params;
   
   // Calculate divisions and note type
-  let divisions, noteDuration, noteType;
-  if (noteValue === 'half') {
-    divisions = 1;
-    noteDuration = 2;
-    noteType = 'half';
-  } else if (noteValue === 'quarter') {
-    divisions = 1;
-    noteDuration = 1;
-    noteType = 'quarter';
-  } else if (noteValue === 'eighth') {
-    divisions = 2;
-    noteDuration = 1;
-    noteType = 'eighth';
-  } else if (noteValue === 'sixteenth' || noteValue === '16th') {
-    divisions = 4;
-    noteDuration = 1;
-    noteType = '16th';
-  } else {
-    divisions = 1;
-    noteDuration = 1;
-    noteType = 'quarter';
-  }
+  const { divisions, noteDuration, noteType, chordsPerBar } = calculateNoteDurationParams(noteValue);
   
   // Determine string set
   let finalStringSet;
@@ -310,7 +332,9 @@ function generateMultiScaleMusicXML(params) {
   }
   
   // Generate stacks for each bar using its assigned scale
-  const stacks = [];
+  // We need to generate stacks for each chord position (chordsPerBar * bars)
+  const allStacks = [];
+  const allScaleInfos = [];
   for (let bar = 0; bar < bars; bar++) {
     const scaleInfo = barToScale[bar];
     if (!scaleInfo) {
@@ -322,9 +346,13 @@ function generateMultiScaleMusicXML(params) {
         scalePcs: getScalePitchClasses(lastSegment.scale, lastSegment.root)
       };
     }
-    const stackRootIndex = bar % 7;
-    const stack = generateQuartalStack(scaleInfo.scalePcs, stackRootIndex, stackType);
-    stacks.push(stack);
+    // Generate chordsPerBar stacks for this bar, cycling through scale degrees
+    for (let chordInBar = 0; chordInBar < chordsPerBar; chordInBar++) {
+      const stackRootIndex = (bar * chordsPerBar + chordInBar) % 7;
+      const stack = generateQuartalStack(scaleInfo.scalePcs, stackRootIndex, stackType);
+      allStacks.push(stack);
+      allScaleInfos.push(scaleInfo);
+    }
   }
   
   // Generate XML (same structure as single-scale)
@@ -339,6 +367,7 @@ function generateMultiScaleMusicXML(params) {
   <part id="P1">`;
   
   let previousPositions = null;
+  let stackIndex = 0;
   
   for (let bar = 0; bar < bars; bar++) {
     xml += `
@@ -364,79 +393,72 @@ function generateMultiScaleMusicXML(params) {
       </direction>`;
     }
     
-    const stack = stacks[bar];
-    const scaleInfo = barToScale[bar] || barToScale[barToScale.length - 1];
-    
-    // Find best position with voice-leading
-    const anchorFret = previousPositions 
-      ? Math.round(previousPositions.reduce((sum, p) => sum + p.fret, 0) / previousPositions.length)
-      : 5 + (bar * 2);
-    const positions = findBestPosition(stack, finalStringSet, anchorFret, previousPositions);
-    
-    if (!positions || positions.length !== stack.length) {
-      throw new Error(`findBestPosition returned ${positions ? positions.length : 0} positions, expected ${stack.length}`);
-    }
-    
-    positions.sort((a, b) => b.stringIndex - a.stringIndex);
-    
-    // Generate notes
-    for (let voice = 0; voice < stack.length; voice++) {
-      const position = positions[voice];
-      if (position) {
-        const midiNote = position.midiNote;
-        const octave = Math.floor(midiNote / 12) - 1;
-        const pitchClass = (position.pitchClass !== undefined && position.pitchClass >= 0) ? position.pitchClass : stack[voice];
-        if (pitchClass < 0 || pitchClass > 11) {
-          throw new Error(`Invalid pitchClass ${pitchClass} for voice ${voice}`);
-        }
-        const noteName = getNoteName(pitchClass, scaleInfo.scale === 'dorian' || scaleInfo.scale === 'minor');
-        if (!noteName) {
-          throw new Error(`getNoteName returned undefined for pitchClass ${pitchClass}`);
-        }
-        const step = noteName.replace(/[#b]/, '');
-        const alter = noteName.includes('#') ? 1 : (noteName.includes('b') ? -1 : null);
-        
-        if (voice > 0) {
-          xml += `
+    // Generate chordsPerBar chords in this measure
+    for (let chordInBar = 0; chordInBar < chordsPerBar; chordInBar++) {
+      const stack = allStacks[stackIndex];
+      const scaleInfo = allScaleInfos[stackIndex];
+      
+      // Find best position with voice-leading
+      const anchorFret = previousPositions 
+        ? Math.round(previousPositions.reduce((sum, p) => sum + p.fret, 0) / previousPositions.length)
+        : 5 + (bar * 2);
+      const positions = findBestPosition(stack, finalStringSet, anchorFret, previousPositions);
+      
+      if (!positions || positions.length !== stack.length) {
+        throw new Error(`findBestPosition returned ${positions ? positions.length : 0} positions, expected ${stack.length}`);
+      }
+      
+      positions.sort((a, b) => b.stringIndex - a.stringIndex);
+      
+      // Generate notes for this chord
+      for (let voice = 0; voice < stack.length; voice++) {
+        const position = positions[voice];
+        if (position) {
+          const midiNote = position.midiNote;
+          const octave = Math.floor(midiNote / 12) - 1;
+          const pitchClass = (position.pitchClass !== undefined && position.pitchClass >= 0) ? position.pitchClass : stack[voice];
+          if (pitchClass < 0 || pitchClass > 11) {
+            throw new Error(`Invalid pitchClass ${pitchClass} for voice ${voice}`);
+          }
+          const noteName = getNoteName(pitchClass, scaleInfo.scale === 'dorian' || scaleInfo.scale === 'minor');
+          if (!noteName) {
+            throw new Error(`getNoteName returned undefined for pitchClass ${pitchClass}`);
+          }
+          const step = noteName.replace(/[#b]/, '');
+          const alter = noteName.includes('#') ? 1 : (noteName.includes('b') ? -1 : null);
+          
+          if (voice > 0) {
+            xml += `
       <note>
         <chord/>`;
-        } else {
-          xml += `
+          } else {
+            xml += `
       <note>`;
-        }
-        xml += `
+          }
+          xml += `
         <pitch>
           <step>${step}</step>`;
-        if (alter !== null) {
-          xml += `
+          if (alter !== null) {
+            xml += `
           <alter>${alter}</alter>`;
-        }
-        xml += `
+          }
+          xml += `
           <octave>${octave}</octave>
         </pitch>
         <duration>${noteDuration}</duration>
         <type>${noteType}</type>
         <voice>1</voice>
       </note>`;
+        }
       }
-    }
-    
-    // Fill measure
-    const beatsPerMeasure = 4;
-    const totalDurationNeeded = beatsPerMeasure * divisions;
-    const chordDuration = noteDuration;
-    const remainingDuration = totalDurationNeeded - chordDuration;
-    
-    if (remainingDuration > 0) {
-      xml += `
-      <forward>
-        <duration>${remainingDuration}</duration>
-      </forward>`;
+      
+      // Update previous positions for voice-leading in next chord
+      previousPositions = positions.map(p => ({ ...p }));
+      stackIndex++;
     }
     
     xml += `
     </measure>`;
-    previousPositions = positions.map(p => ({ ...p }));
   }
   
   xml += `
@@ -457,31 +479,7 @@ function generateMusicXML(params) {
   const scalePcs = getScalePitchClasses(scale, root);
   
   // Calculate divisions and note type based on note value
-  // MusicXML: divisions = divisions per quarter note (must be integer)
-  // duration = number of divisions for this note
-  let divisions, noteDuration, noteType;
-  if (noteValue === 'half') {
-    divisions = 1; // 1 division per quarter note
-    noteDuration = 2; // Half note = 2 quarter notes = 2 divisions
-    noteType = 'half';
-  } else if (noteValue === 'quarter') {
-    divisions = 1; // 1 division per quarter note
-    noteDuration = 1; // Quarter note = 1 division
-    noteType = 'quarter';
-  } else if (noteValue === 'eighth') {
-    divisions = 2; // 2 divisions per quarter note (for eighth notes)
-    noteDuration = 1; // Eighth note = 1 division (when divisions=2)
-    noteType = 'eighth';
-  } else if (noteValue === 'sixteenth' || noteValue === '16th') {
-    divisions = 4; // 4 divisions per quarter note (for sixteenth notes)
-    noteDuration = 1; // Sixteenth note = 1 division (when divisions=4)
-    noteType = '16th';
-  } else {
-    // Default to quarter
-    divisions = 1;
-    noteDuration = 1;
-    noteType = 'quarter';
-  }
+  const { divisions, noteDuration, noteType, chordsPerBar } = calculateNoteDurationParams(noteValue);
   
   // Determine string set
   let finalStringSet;
@@ -496,12 +494,14 @@ function generateMusicXML(params) {
     }
   }
   
-  // Generate stacks
-  const stacks = [];
+  // Generate stacks for all chords (chordsPerBar * bars)
+  const allStacks = [];
   for (let bar = 0; bar < bars; bar++) {
-    const stackRootIndex = bar % 7;
-    const stack = generateQuartalStack(scalePcs, stackRootIndex, stackType);
-    stacks.push(stack);
+    for (let chordInBar = 0; chordInBar < chordsPerBar; chordInBar++) {
+      const stackRootIndex = (bar * chordsPerBar + chordInBar) % 7;
+      const stack = generateQuartalStack(scalePcs, stackRootIndex, stackType);
+      allStacks.push(stack);
+    }
   }
   
   let xml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -516,6 +516,7 @@ function generateMusicXML(params) {
   
   // Track previous positions for voice-leading
   let previousPositions = null;
+  let stackIndex = 0;
   
   for (let bar = 0; bar < bars; bar++) {
     xml += `
@@ -542,90 +543,78 @@ function generateMusicXML(params) {
       </direction>`;
     }
     
-    const stack = stacks[bar];
-    
-    // Find best position for this stack with voice-leading
-    // Use previous positions to minimize leaps
-    const anchorFret = previousPositions 
-      ? Math.round(previousPositions.reduce((sum, p) => sum + p.fret, 0) / previousPositions.length)
-      : 5 + (bar * 2); // First chord: slight position shift per bar
-    const positions = findBestPosition(stack, finalStringSet, anchorFret, previousPositions);
-    
-    // CRITICAL: Ensure we have exactly stack.length positions
-    if (!positions || positions.length !== stack.length) {
-      throw new Error(`findBestPosition returned ${positions ? positions.length : 0} positions, expected ${stack.length}`);
-    }
-    
-    // Sort positions by string index (lowest to highest)
-    positions.sort((a, b) => b.stringIndex - a.stringIndex);
-    
-    // Generate notes for ALL positions - we know positions.length === stack.length
-    // CRITICAL: All notes must be in the same voice with <chord/> tags to play simultaneously
-    // IMPORTANT: <chord/> must be on the same line as <note> for proper MusicXML parsing
-    for (let voice = 0; voice < stack.length; voice++) {
-      const position = positions[voice];
-      if (position) {
-        const midiNote = position.midiNote;
-        const octave = Math.floor(midiNote / 12) - 1;
-        // Ensure pitchClass is set - use from position or from stack
-        const pitchClass = (position.pitchClass !== undefined && position.pitchClass >= 0) ? position.pitchClass : stack[voice];
-        if (pitchClass < 0 || pitchClass > 11) {
-          throw new Error(`Invalid pitchClass ${pitchClass} for voice ${voice}, stack: ${JSON.stringify(stack)}`);
-        }
-        const noteName = getNoteName(pitchClass, scale === 'dorian' || scale === 'minor');
-        if (!noteName) {
-          throw new Error(`getNoteName returned undefined for pitchClass ${pitchClass}`);
-        }
-        const step = noteName.replace(/[#b]/, '');
-        const alter = noteName.includes('#') ? 1 : (noteName.includes('b') ? -1 : null);
-        
-        // Add <chord/> tag inline for all notes after the first one
-        if (voice > 0) {
-          xml += `
+    // Generate chordsPerBar chords in this measure
+    for (let chordInBar = 0; chordInBar < chordsPerBar; chordInBar++) {
+      const stack = allStacks[stackIndex];
+      
+      // Find best position for this stack with voice-leading
+      // Use previous positions to minimize leaps
+      const anchorFret = previousPositions 
+        ? Math.round(previousPositions.reduce((sum, p) => sum + p.fret, 0) / previousPositions.length)
+        : 5 + (bar * 2); // First chord: slight position shift per bar
+      const positions = findBestPosition(stack, finalStringSet, anchorFret, previousPositions);
+      
+      // CRITICAL: Ensure we have exactly stack.length positions
+      if (!positions || positions.length !== stack.length) {
+        throw new Error(`findBestPosition returned ${positions ? positions.length : 0} positions, expected ${stack.length}`);
+      }
+      
+      // Sort positions by string index (lowest to highest)
+      positions.sort((a, b) => b.stringIndex - a.stringIndex);
+      
+      // Generate notes for ALL positions - we know positions.length === stack.length
+      // CRITICAL: All notes must be in the same voice with <chord/> tags to play simultaneously
+      // IMPORTANT: <chord/> must be on the same line as <note> for proper MusicXML parsing
+      for (let voice = 0; voice < stack.length; voice++) {
+        const position = positions[voice];
+        if (position) {
+          const midiNote = position.midiNote;
+          const octave = Math.floor(midiNote / 12) - 1;
+          // Ensure pitchClass is set - use from position or from stack
+          const pitchClass = (position.pitchClass !== undefined && position.pitchClass >= 0) ? position.pitchClass : stack[voice];
+          if (pitchClass < 0 || pitchClass > 11) {
+            throw new Error(`Invalid pitchClass ${pitchClass} for voice ${voice}, stack: ${JSON.stringify(stack)}`);
+          }
+          const noteName = getNoteName(pitchClass, scale === 'dorian' || scale === 'minor');
+          if (!noteName) {
+            throw new Error(`getNoteName returned undefined for pitchClass ${pitchClass}`);
+          }
+          const step = noteName.replace(/[#b]/, '');
+          const alter = noteName.includes('#') ? 1 : (noteName.includes('b') ? -1 : null);
+          
+          // Add <chord/> tag inline for all notes after the first one
+          if (voice > 0) {
+            xml += `
       <note>
         <chord/>`;
-        } else {
-          xml += `
+          } else {
+            xml += `
       <note>`;
-        }
-        xml += `
+          }
+          xml += `
         <pitch>
           <step>${step}</step>`;
-        if (alter !== null) {
-          xml += `
+          if (alter !== null) {
+            xml += `
           <alter>${alter}</alter>`;
-        }
-        xml += `
+          }
+          xml += `
           <octave>${octave}</octave>
         </pitch>
         <duration>${noteDuration}</duration>
         <type>${noteType}</type>
         <voice>1</voice>
       </note>`;
+        }
       }
-    }
-    
-    // Add forward/rest to fill the measure if needed
-    // In 4/4 time, we need 4 beats total. If noteDuration is 1 (quarter note), we need 4 quarter notes worth
-    // But we're only putting one chord, so we need to add rests to fill the measure
-    const beatsPerMeasure = 4; // 4/4 time
-    const totalDurationNeeded = beatsPerMeasure * divisions; // Total divisions needed for full measure
-    const chordDuration = noteDuration; // Duration of our chord
-    const remainingDuration = totalDurationNeeded - chordDuration;
-    
-    if (remainingDuration > 0) {
-      // Add a forward element (rest) to complete the measure
-      xml += `
-      <forward>
-        <duration>${remainingDuration}</duration>
-      </forward>`;
+      
+      // Update previous positions for voice-leading in next chord
+      previousPositions = positions.map(p => ({ ...p }));
+      stackIndex++;
     }
     
     xml += `
     </measure>`;
-    
-    // Update previous positions for voice-leading in next chord
-    previousPositions = positions.map(p => ({ ...p }));
   }
   
   xml += `
@@ -653,25 +642,72 @@ function parseCommand(command) {
   let multiScaleSegments = [];
   let totalBars = 0;
   
+  // Try pattern 0a: Semicolon-separated commands "Generate X scale N bars; Generate Y scale N bars; ..."
+  if (command.includes(';')) {
+    const semicolonCommands = command.split(';').map(c => c.trim()).filter(c => c.length > 0);
+    if (semicolonCommands.length > 1) {
+      // Pattern to match: "Generate X scale, N bars, ..." or "Generate X scale N bars, ..."
+      const semicolonPattern = /(?:generate\s+)?([A-G][#b]?)\s+(?:(?:4-note|four\s+note|4\s+note)\s+)?(major|minor|dorian|mixolydian|lydian|phrygian|locrian|ionian|aeolian)\s+(?:quartals?[,\s]+)?(\d+)\s*(?:bars?|bar)/i;
+      let currentBar = 0;
+      
+      for (const subCmd of semicolonCommands) {
+        const match = subCmd.match(semicolonPattern);
+        if (match) {
+          const root = match[1];
+          const scale = match[2].toLowerCase();
+          const bars = parseInt(match[3]);
+          multiScaleSegments.push({ root, scale, bars, startBar: currentBar });
+          currentBar += bars;
+          totalBars = currentBar;
+        }
+      }
+    }
+  }
+  
+  // Try pattern 0b: "X scale N bars, then Y scale N bars, then..." (handle "then" separator)
+  // Match: root, scale, optional "quartals", number, "bars", then...
+  if (multiScaleSegments.length === 0 && lower.includes('then')) {
+    const thenPattern = /([A-G][#b]?)\s+(?:(?:4-note|four\s+note|4\s+note)\s+)?(major|minor|dorian|mixolydian|lydian|phrygian|locrian|ionian|aeolian)\s+(?:quartals?\s+)?(\d+)\s*(?:bars?|bar)/gi;
+    const thenMatches = [];
+    let match;
+    while ((match = thenPattern.exec(command)) !== null) {
+      thenMatches.push(match);
+    }
+    
+    if (thenMatches.length > 1) {
+      let currentBar = 0;
+      for (const match of thenMatches) {
+        const root = match[1];
+        const scale = match[2].toLowerCase();
+        const bars = parseInt(match[3]);
+        multiScaleSegments.push({ root, scale, bars, startBar: currentBar });
+        currentBar += bars;
+        totalBars = currentBar;
+      }
+    }
+  }
+  
   // Try pattern 1: "X scale bars N-M" (handle "4-note" before or after scale)
   // Match: root, scale, optional "4-note", "bars", numbers
   // OR: root, "4-note", scale, "bars", numbers
-  const pattern1Regex = /([A-G][#b]?)\s+(?:(?:4-note|four\s+note|4\s+note)\s+)?(major|minor|dorian|mixolydian|lydian|phrygian|locrian|ionian|aeolian)\s+(?:4-note|four\s+note|4\s+note)?\s*(?:bars?|bar)\s+(\d+)(?:\s*-\s*(\d+))?/gi;
-  const pattern1Matches = [];
-  let match;
-  while ((match = pattern1Regex.exec(command)) !== null) {
-    pattern1Matches.push(match);
-  }
-  
-  if (pattern1Matches.length > 1 && pattern1Matches.length <= 5) {
-    for (const match of pattern1Matches) {
-      const root = match[1];
-      const scale = match[2].toLowerCase();
-      const startBar = parseInt(match[3]);
-      const endBar = match[4] ? parseInt(match[4]) : startBar;
-      const bars = endBar - startBar + 1;
-      multiScaleSegments.push({ root, scale, bars, startBar: startBar - 1 }); // 0-indexed
-      totalBars = Math.max(totalBars, endBar);
+  if (multiScaleSegments.length === 0) {
+    const pattern1Regex = /([A-G][#b]?)\s+(?:(?:4-note|four\s+note|4\s+note)\s+)?(major|minor|dorian|mixolydian|lydian|phrygian|locrian|ionian|aeolian)\s+(?:4-note|four\s+note|4\s+note)?\s*(?:bars?|bar)\s+(\d+)(?:\s*-\s*(\d+))?/gi;
+    const pattern1Matches = [];
+    let match;
+    while ((match = pattern1Regex.exec(command)) !== null) {
+      pattern1Matches.push(match);
+    }
+    
+    if (pattern1Matches.length > 1 && pattern1Matches.length <= 5) {
+      for (const match of pattern1Matches) {
+        const root = match[1];
+        const scale = match[2].toLowerCase();
+        const startBar = parseInt(match[3]);
+        const endBar = match[4] ? parseInt(match[4]) : startBar;
+        const bars = endBar - startBar + 1;
+        multiScaleSegments.push({ root, scale, bars, startBar: startBar - 1 }); // 0-indexed
+        totalBars = Math.max(totalBars, endBar);
+      }
     }
   }
   
@@ -732,6 +768,7 @@ function parseCommand(command) {
     if (lower.includes('sixteenth') || lower.includes('16th')) noteValue = 'sixteenth';
     else if (lower.includes('eighth') || lower.includes('8th')) noteValue = 'eighth';
     else if (lower.includes('half')) noteValue = 'half';
+    else if (lower.includes('whole')) noteValue = 'whole';
     else if (lower.includes('quarter')) noteValue = 'quarter';
     
     // Extract string set (if specified)
@@ -844,6 +881,7 @@ function parseCommand(command) {
   if (lower.includes('sixteenth') || lower.includes('16th')) noteValue = 'sixteenth';
   else if (lower.includes('eighth') || lower.includes('8th')) noteValue = 'eighth';
   else if (lower.includes('half')) noteValue = 'half';
+  else if (lower.includes('whole')) noteValue = 'whole';
   else if (lower.includes('quarter')) noteValue = 'quarter';
   
   // Extract string set (if specified)
